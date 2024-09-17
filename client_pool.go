@@ -1,24 +1,24 @@
 package main
 
-var poolIsNotEmpty = make(chan bool)
+var clientPoolIsNotEmpty = make(chan bool)
 
-type Pool struct {
+type ClientPool struct {
 	clients map[*Client]bool
 }
 
-func NewPool() *Pool {
-	return &Pool{
+func NewClientPool() *ClientPool {
+	return &ClientPool{
 		clients: make(map[*Client]bool),
 	}
 }
 
-func (p *Pool) AddClient(client *Client) {
+func (p *ClientPool) AddClient(client *Client) {
 	p.clients[client] = true
 	if len(p.clients) == 1 {
-		poolIsNotEmpty <- true
+		clientPoolIsNotEmpty <- true
 	}
 }
 
-func (p *Pool) RemoveClient(client *Client) {
+func (p *ClientPool) RemoveClient(client *Client) {
 	delete(p.clients, client)
 }
