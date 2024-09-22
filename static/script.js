@@ -79,9 +79,9 @@ window.onload = function () {
   }
 
   function createFrames(startFrame, endFrame) {
-    const frames = new Array(endFrame - startFrame);
+    const frames = new Array(endFrame - startFrame + 1);
 
-    for (let i = startFrame; i < endFrame; i++) {
+    for (let i = startFrame; i <= endFrame; i++) {
       frames[i - startFrame] = asciiframe(i);
     }
     return frames;
@@ -98,8 +98,8 @@ window.onload = function () {
   const possibleCharacters = ".,-~:;=!*#$@ \n";
 
   // Encoding frames
-  function encodeFrames(frames) {
-    return frames.flatMap((frame) => {
+  function encodeRenderResult(renderTaskID, frames) {
+    const encodedFrames = frames.flatMap((frame) => {
       const bytes = [];
       for (let i = 0; i < frame.length; i += 2) {
         const char1 = frame[i];
@@ -111,13 +111,19 @@ window.onload = function () {
         if (index1 === -1 || index2 === -1) {
           throw new Error(`Invalid character found: ${char1} or ${char2}`);
         }
-        // console.log("index1: " + index1 + " index2: " + index2);
 
         const byte = (index1 << 4) | index2;
         bytes.push(byte);
       }
       return bytes;
     });
+    const result = new Uint8Array(encodedFrames.length + 3); // +3 to include the message type byte and the renderTaskID
+    result.set(encodedFrames, 3);
+    result[0] = 0x1; // messageType: MessageTypeRenderResult
+    // Big endian encoding
+    result[1] = (renderTaskID >> 8) & 0xff;
+    result[2] = renderTaskID & 0xff;
+    return result;
   }
 
   // Decoding frames
@@ -125,6 +131,7 @@ window.onload = function () {
     let currentFrame = "";
     let decodedFrames = [];
 
+    // encodedFrames.slice(3).forEach((byte) => { // Skip the first three bytes, the first for messageType and the other two are for renderTaskID, only do this when decoding the encoded frames on the same machine (i.e. when debugging)
     encodedFrames.forEach((byte) => {
       const highNibble = (byte >> 4) & 0x0f;
       const lowNibble = byte & 0x0f;
@@ -160,6 +167,7 @@ window.onload = function () {
 
   ws.onmessage = function (e) {
     const data = e.data;
+    console.log("Received message");
 
     const dv = new DataView(data);
 
@@ -170,33 +178,25 @@ window.onload = function () {
 
       console.log("Received work request");
 
-      const startFrame = dv.getUint32(1);
-      const endFrame = dv.getUint32(5);
+      const renderTaskID = dv.getUint16(1);
+      const startFrame = dv.getUint32(3);
+      const endFrame = dv.getUint32(7);
 
       console.log(
         "Server requested work from " + startFrame + " to " + endFrame
       );
-      const work = createFrames(startFrame, endFrame);
-      const encodedData = encodeFrames(work);
-      console.log("111-> Encoded work: " + work.length);
 
-      // const decodedFrames = decodeFrames(encodedData);
-      // console.log("Decoded frames: " + decodedFrames);
+      const renderResult = createFrames(startFrame, endFrame);
+      const encodedData = encodeRenderResult(renderTaskID, renderResult);
 
       console.log("Work done, sending to server...");
       ws.send(encodedData);
     } else if (messageType === 0x2) {
-      // Received frame chunk broadcast message
-      console.log("Received frame chunk broadcast. Drawing to canvas...");
+      // Received frame broadcast message
+      console.log("Received a broadcast of frames. Drawing to canvas...");
 
       const encodedData = new Uint8Array(data, 1); // Skip the message type byte
-      // console.log("222-> Encoded data: " + encodedData);
-
-      // console.log(encodedData);
-
       const decodedFrames = decodeFrames(encodedData);
-      // console.log("Decoded frames: ")
-      // console.log(decodedFrames);
 
       // Add the decoded frames to the circular buffer
       decodedFrames.forEach((frame) => frameBuffer.push(frame));

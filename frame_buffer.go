@@ -1,7 +1,7 @@
 package main
 
 import (
-	"cmp"
+	"log"
 	"slices"
 )
 
@@ -17,12 +17,12 @@ func NewFrameBuffer() *FrameBuffer {
 
 var frameBuffer = NewFrameBuffer()
 
-func (fb *FrameBuffer) AddFrameBatch(startFrame uint32, endFrame uint32, data *[BatchSize]byte) {
+func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[BatchSize]byte) {
 	for i := startFrame; i <= endFrame; i++ {
 		offset := (i - startFrame) * FrameSize
 		fb.frames[i] = data[offset : offset+FrameSize]
-
 	}
+	triggerFrameBufferSizeCheck <- true
 }
 
 func (fb *FrameBuffer) GetOrderedFrames() []byte {
@@ -30,21 +30,37 @@ func (fb *FrameBuffer) GetOrderedFrames() []byte {
 	for k := range fb.frames {
 		keys = append(keys, k)
 	}
-	slices.SortFunc(keys, func(i, j uint32) int {
-		return cmp.Compare(keys[i], keys[j])
-	})
+	slices.Sort(keys)
 
-	orderedFrames := make([]byte, len(keys))
-	for _, k := range keys {
-		orderedFrames = append(orderedFrames, fb.frames[k]...)
+	totalFrames := len(keys)
+	if totalFrames == 0 {
+		log.Println("Returning empty frames")
+		return nil
 	}
-	return orderedFrames
+
+	encodedFrames := make([]byte, totalFrames*FrameSize)
+	for i, key := range keys {
+		copy(encodedFrames[i*FrameSize:], fb.frames[key])
+	}
+	return encodedFrames
 }
 
-func (fb *FrameBuffer) ClearBuffer() {
-	fb.frames = make(map[uint32][]byte)
+func (fb *FrameBuffer) RemoveSentFramesFromBuffer() {
+	startFrame := uint32(0)
+	endFrame := uint32(SecondsToBroadcast*FramesPerBatch - 1)
+	for i := startFrame; i <= endFrame; i++ {
+		delete(fb.frames, i)
+	}
+	triggerTaskDispatcher <- true // Trigger the taskDispatcher to send more work
 }
 
 func (fb *FrameBuffer) GetLength() uint32 {
 	return uint32(len(fb.frames))
+}
+
+func (fb *FrameBuffer) IsBufferSizeSufficientForBroadcast(isFirstBroadcast bool) bool {
+	if isFirstBroadcast {
+		return fb.GetLength() > FirstSecondsToBroadcast*FramesPerBatch
+	}
+	return fb.GetLength() > SecondsToBroadcast*FramesPerBatch
 }

@@ -17,27 +17,16 @@ const BatchSize = FrameSize * FramesPerBatch // bytes, FrameBatch also has some 
 
 type FrameBatchMetadata struct {
 	ClientID   uint16
-	renderTask *RenderTask
+	renderTask RenderTask
 	completed  bool
 }
 
 func NewFrameBatchMetadata(ClientID uint16, startFrame uint32, endFrame uint32) *FrameBatchMetadata {
 	id := len(frameBatchMap.GetFrameBatches(ClientID))
 	renderTask := NewRenderTask(uint16(id), startFrame, endFrame)
-
 	return &FrameBatchMetadata{
 		ClientID:   ClientID,
-		renderTask: renderTask,
+		renderTask: *renderTask,
 		completed:  false,
 	}
 }
-
-// func covertBinaryToChunkFormat(data []byte) (uint32, uint32, []byte, error) {
-// 	if len(data) != TaskSize {
-// 		return 0, 0, []byte{}, errors.New("invalid chunk size")
-// 	}
-// 	startFrame := binary.BigEndian.Uint32(data[0:4])
-// 	endFrame := binary.BigEndian.Uint32(data[4:8])
-// 	var chunkPerformed = data[8:]
-// 	return startFrame, endFrame, chunkPerformed, nil
-// }

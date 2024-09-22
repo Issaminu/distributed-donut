@@ -1,70 +1,77 @@
 package main
 
 import (
+	"context"
+	"log"
 	"math/rand"
-	"sync"
+	"time"
 )
 
 var triggerTaskDispatcher = make(chan bool)
+var isFirstBroadcast = true
 var triggerFrameBroadcaster = make(chan bool)
+var triggerFrameBufferSizeCheck = make(chan bool)
 
-func frameOrchestrator() {
-	go frameBroadcaster()
-	go taskDispatcher()
+func frameOrchestrator(ctx context.Context) {
+	go frameBroadcaster(ctx)
+	go taskDispatcher(ctx)
+	go frameBufferSizeChecker(ctx)
 	triggerTaskDispatcher <- true // Trigger the taskDispatcher for the first time
 }
 
 const (
-	FramesPerBatch           = 60
-	QueueLength              = 12                           // This allows for storing up to 12 batches (12 seconds of animation)
-	MinQueueLengthToRetrieve = 6                            // When the queue length drops below this point, we dispatch render tasks. When we receive all render results, we broadcast them to all clients.
-	NumBatchesToRetrieve     = MinQueueLengthToRetrieve * 2 // When fetching, retrieve double what is needed to trigger a fetch
+	FramesPerBatch          = 60 // Frames per batch/second
+	NumBatchesToRetrieve    = 12 // Send 12 rendering tasks to clients.
+	FirstSecondsToBroadcast = 6  // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
+	SecondsToBroadcast      = 4  // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 )
 
-func frameBroadcaster() {
+func frameBroadcaster(ctx context.Context) {
 	for {
-		<-triggerFrameBroadcaster
+		select {
+		case <-ctx.Done():
+			log.Println("Frame broadcaster shutting down...")
+			return
+		case <-triggerFrameBroadcaster:
 
-		if len(clientPool.clients) == 0 {
-			<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
+			if len(clientPool.clients) == 0 {
+				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
+			}
+			frames := frameBuffer.GetOrderedFrames()
+			sendFramesToAllClients(frames)
+			time.Sleep(SecondsToBroadcast * time.Second) // Sleep for the specified number of seconds before sending again
+			frameBuffer.RemoveSentFramesFromBuffer()
 		}
-		frames := frameBuffer.GetOrderedFrames()
-		sendFramesToAllClients(frames)
-		frameBuffer.ClearBuffer()
 	}
 }
 
-func taskDispatcher() {
+func taskDispatcher(ctx context.Context) {
 	for {
-		for frameBuffer.GetLength() > MinQueueLengthToRetrieve {
-			<-triggerTaskDispatcher
-		}
+		select {
+		case <-ctx.Done():
+			log.Println("Task dispatcher shutting down...")
+			return
+		case <-triggerTaskDispatcher:
 
-		if len(clientPool.clients) == 0 {
-			<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
-		}
+			if len(clientPool.clients) == 0 {
+				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
+			}
+			log.Println("Task dispatcher triggered")
 
-		var wg sync.WaitGroup
-		var currentFrame = frameBuffer.GetLength()
+			var currentFrame = frameBuffer.GetLength()
 
-		for range NumBatchesToRetrieve {
-			// Add a goroutine to the WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				// Select a random client to do the work needed for the current chunk
+			for range NumBatchesToRetrieve {
+				// Select a random client to do the work needed for the current batch
 				client := _TEMP_getRandomItemFromMap(clientPool.clients)
 				startFrame := currentFrame
 				endFrame := currentFrame + FramesPerBatch - 1
+				log.Println("Sending work for frames", startFrame, "to", endFrame, "to client", client.id)
 				frameBatch := NewFrameBatchMetadata(client.id, startFrame, endFrame)
 				frameBatchMap.AddFrameBatch(frameBatch)
-				client.RequestWork(currentFrame, endFrame)
-			}()
-			currentFrame += FramesPerBatch
+				client.RequestWork(frameBatch.renderTask.id, currentFrame, endFrame)
+				currentFrame += FramesPerBatch
+			}
 		}
-		// Wait for all goroutines to finish before continuing or sending a signal
-		wg.Wait()
-		triggerFrameBroadcaster <- true
 	}
 }
 
@@ -80,4 +87,21 @@ func _TEMP_getRandomItemFromMap(m map[*Client]bool) *Client { // This will get r
 
 	// Return the random key and the corresponding value
 	return randomKey
+}
+
+func frameBufferSizeChecker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-triggerFrameBufferSizeCheck:
+			if frameBuffer.IsBufferSizeSufficientForBroadcast(isFirstBroadcast) {
+				if isFirstBroadcast {
+					isFirstBroadcast = false
+				}
+				log.Println("Gathered enough frames, triggering a broadcast...")
+				triggerFrameBroadcaster <- true
+			}
+		}
+	}
 }
