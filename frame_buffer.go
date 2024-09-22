@@ -1,66 +1,78 @@
 package main
 
-import (
-	"log"
-	"slices"
-)
-
 type FrameBuffer struct {
-	frames map[uint32][]byte // Map<frame number, frame data>
+	buffer           [BufferSize][FrameSize]byte
+	head             int
+	tail             int
+	firstFrameNumber uint32
 }
 
 func NewFrameBuffer() *FrameBuffer {
 	return &FrameBuffer{
-		frames: make(map[uint32][]byte),
+		head:             0,
+		tail:             0,
+		firstFrameNumber: 0,
 	}
 }
 
 var frameBuffer = NewFrameBuffer()
 
 func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[BatchSize]byte) {
+	if fb.GetLength() == 0 {
+		fb.firstFrameNumber = startFrame
+	}
+
 	for i := startFrame; i <= endFrame; i++ {
 		offset := (i - startFrame) * FrameSize
-		fb.frames[i] = data[offset : offset+FrameSize]
+		copy(fb.buffer[fb.tail][:], data[offset:offset+FrameSize])
+		fb.tail = (fb.tail + 1) % BufferSize
+		if fb.tail == fb.head {
+			fb.head = (fb.head + 1) % BufferSize
+			fb.firstFrameNumber++
+		}
 	}
-	triggerFrameBufferSizeCheck <- true
+	frameBufferSizeCheck.trigger <- true
 }
 
 func (fb *FrameBuffer) GetOrderedFrames() []byte {
-	var keys []uint32
-	for k := range fb.frames {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-
-	totalFrames := len(keys)
-	if totalFrames == 0 {
-		log.Println("Returning empty frames")
+	length := fb.GetLength()
+	if length == 0 {
 		return nil
 	}
 
-	encodedFrames := make([]byte, totalFrames*FrameSize)
-	for i, key := range keys {
-		copy(encodedFrames[i*FrameSize:], fb.frames[key])
+	result := make([]byte, length*FrameSize)
+	index := 0
+
+	for i := 0; i < length; i++ {
+		bufferIndex := (fb.head + i) % BufferSize
+		copy(result[index:index+FrameSize], fb.buffer[bufferIndex][:])
+		index += FrameSize
 	}
-	return encodedFrames
+
+	return result
 }
 
 func (fb *FrameBuffer) RemoveSentFramesFromBuffer() {
-	startFrame := uint32(0)
-	endFrame := uint32(SecondsToBroadcast*FramesPerBatch - 1)
-	for i := startFrame; i <= endFrame; i++ {
-		delete(fb.frames, i)
+	framesToRemove := SecondsToBroadcast * FramesPerBatch
+	if framesToRemove > fb.GetLength() {
+		framesToRemove = fb.GetLength()
 	}
-	triggerTaskDispatcher <- true // Trigger the taskDispatcher to send more work
+
+	fb.head = (fb.head + framesToRemove) % BufferSize
+	fb.firstFrameNumber += uint32(framesToRemove)
 }
 
-func (fb *FrameBuffer) GetLength() uint32 {
-	return uint32(len(fb.frames))
+func (fb *FrameBuffer) GetLength() int {
+	if fb.tail >= fb.head {
+		return fb.tail - fb.head
+	}
+	return BufferSize - fb.head + fb.tail
 }
 
 func (fb *FrameBuffer) IsBufferSizeSufficientForBroadcast(isFirstBroadcast bool) bool {
+	requiredFrames := SecondsToBroadcast * FramesPerBatch
 	if isFirstBroadcast {
-		return fb.GetLength() > FirstSecondsToBroadcast*FramesPerBatch
+		requiredFrames = FirstSecondsToBroadcast * FramesPerBatch
 	}
-	return fb.GetLength() > SecondsToBroadcast*FramesPerBatch
+	return fb.GetLength() >= requiredFrames
 }

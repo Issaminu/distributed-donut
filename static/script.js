@@ -163,33 +163,28 @@ window.onload = function () {
   ws.onopen = function () {
     console.log("Connection established");
   };
-  const frameBuffer = new CircularBuffer(12 * 60); // 12 seconds of animation
+  const frameBuffer = new CircularBuffer(20 * 60);
 
   ws.onmessage = function (e) {
     const data = e.data;
-    console.log("Received message");
 
     const dv = new DataView(data);
 
     const messageType = dv.getUint8(0);
 
     if (messageType === 0x0) {
-      // Received work request message
-
-      console.log("Received work request");
-
       const renderTaskID = dv.getUint16(1);
       const startFrame = dv.getUint32(3);
       const endFrame = dv.getUint32(7);
 
       console.log(
-        "Server requested work from " + startFrame + " to " + endFrame
+        "Received Render Task for frames from " + startFrame + " to " + endFrame
       );
 
       const renderResult = createFrames(startFrame, endFrame);
       const encodedData = encodeRenderResult(renderTaskID, renderResult);
 
-      console.log("Work done, sending to server...");
+      console.log("Render Task done, sending Render Result to server...");
       ws.send(encodedData);
     } else if (messageType === 0x2) {
       // Received frame broadcast message

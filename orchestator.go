@@ -10,7 +10,16 @@ import (
 var triggerTaskDispatcher = make(chan bool)
 var isFirstBroadcast = true
 var triggerFrameBroadcaster = make(chan bool)
-var triggerFrameBufferSizeCheck = make(chan bool)
+
+type FrameBufferSizeCheck struct {
+	trigger chan bool
+	locked  bool
+}
+
+var frameBufferSizeCheck = FrameBufferSizeCheck{
+	trigger: make(chan bool),
+	locked:  false,
+}
 
 func frameOrchestrator(ctx context.Context) {
 	go frameBroadcaster(ctx)
@@ -20,10 +29,11 @@ func frameOrchestrator(ctx context.Context) {
 }
 
 const (
-	FramesPerBatch          = 60 // Frames per batch/second
-	NumBatchesToRetrieve    = 12 // Send 12 rendering tasks to clients.
-	FirstSecondsToBroadcast = 6  // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
-	SecondsToBroadcast      = 4  // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
+	FramesPerBatch          = 60                              // Frames per batch/second
+	BufferSize              = FrameSize * FramesPerBatch * 20 // Storing 20 seconds worth of frames in the buffer (WIP)
+	NumBatchesToRetrieve    = 12                              // Send 12 rendering tasks to clients.
+	FirstSecondsToBroadcast = 6                               // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
+	SecondsToBroadcast      = 4                               // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 )
 
 func frameBroadcaster(ctx context.Context) {
@@ -41,6 +51,8 @@ func frameBroadcaster(ctx context.Context) {
 			sendFramesToAllClients(frames)
 			time.Sleep(SecondsToBroadcast * time.Second) // Sleep for the specified number of seconds before sending again
 			frameBuffer.RemoveSentFramesFromBuffer()
+			frameBufferSizeCheck.locked = false
+			triggerTaskDispatcher <- true
 		}
 	}
 }
@@ -58,7 +70,7 @@ func taskDispatcher(ctx context.Context) {
 			}
 			log.Println("Task dispatcher triggered")
 
-			var currentFrame = frameBuffer.GetLength()
+			var currentFrame = uint32(frameBuffer.GetLength())
 
 			for range NumBatchesToRetrieve {
 				// Select a random client to do the work needed for the current batch
@@ -94,12 +106,16 @@ func frameBufferSizeChecker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-triggerFrameBufferSizeCheck:
+		case <-frameBufferSizeCheck.trigger:
+			if frameBufferSizeCheck.locked {
+				continue
+			}
 			if frameBuffer.IsBufferSizeSufficientForBroadcast(isFirstBroadcast) {
+				frameBufferSizeCheck.locked = true
+				log.Println("Gathered enough frames, triggering a broadcast...")
 				if isFirstBroadcast {
 					isFirstBroadcast = false
 				}
-				log.Println("Gathered enough frames, triggering a broadcast...")
 				triggerFrameBroadcaster <- true
 			}
 		}
