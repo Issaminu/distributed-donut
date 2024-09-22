@@ -28,7 +28,9 @@ func frameBroadcaster() {
 		if len(clientPool.clients) == 0 {
 			<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
 		}
-		sendFramesToAllClients(frameBuffer.GetOrderedFrames())
+		frames := frameBuffer.GetOrderedFrames()
+		sendFramesToAllClients(frames)
+		frameBuffer.ClearBuffer()
 	}
 }
 

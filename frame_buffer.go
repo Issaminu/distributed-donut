@@ -6,7 +6,7 @@ import (
 )
 
 type FrameBuffer struct {
-	frames map[uint32][]byte // Map of frame number to frame data
+	frames map[uint32][]byte // Map<frame number, frame data>
 }
 
 func NewFrameBuffer() *FrameBuffer {
@@ -39,6 +39,10 @@ func (fb *FrameBuffer) GetOrderedFrames() []byte {
 		orderedFrames = append(orderedFrames, fb.frames[k]...)
 	}
 	return orderedFrames
+}
+
+func (fb *FrameBuffer) ClearBuffer() {
+	fb.frames = make(map[uint32][]byte)
 }
 
 func (fb *FrameBuffer) GetLength() uint32 {
