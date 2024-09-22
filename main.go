@@ -9,15 +9,11 @@ import (
 
 var upgrader = websocket.Upgrader{}
 
-var pool = NewPool()
-
-var messageChan = make(chan *Message)
+var clientPool = NewClientPool()
 
 func websocketHandler() {
-	http.HandleFunc("/connect", handleNewConnections)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "index.html")
-	})
+	http.HandleFunc("/connect", handleNewConnection)
+	http.Handle("/", http.FileServer(http.Dir("./static")))
 	fmt.Println("Server started on :8080")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
@@ -25,7 +21,7 @@ func websocketHandler() {
 	}
 }
 
-func handleNewConnections(w http.ResponseWriter, r *http.Request) {
+func handleNewConnection(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		fmt.Println(err)
@@ -39,27 +35,20 @@ func handleNewConnections(w http.ResponseWriter, r *http.Request) {
 	}(conn)
 	fmt.Println("Client connected")
 	client := NewClient(conn)
-	pool.AddClient(client)
+	clientPool.AddClient(client)
 	for {
 		_, incomingMessage, err := conn.ReadMessage()
 		if err != nil {
 			fmt.Println(err)
-			pool.RemoveClient(client)
+			clientPool.RemoveClient(client)
 			return
 		}
-		// print the length of the incoming message
-		fmt.Println("Incoming message length: ", len(incomingMessage))
-		var messageBuffer [MessageSize]byte
-		copy(messageBuffer[:], incomingMessage)
-		fmt.Println("Copied message length: ", len(messageBuffer))
-		message := NewReceivedMessage(messageBuffer)
-		messageChan <- message
+		client.handleReceivedMessage(incomingMessage)
 	}
 }
 
 func main() {
-	go websocketHandler()  // Start the websocket server and handles connections.
-	go messageReceiver()   // Handles receiving messages from the clients.
+	go websocketHandler()  // Start the websocket server and handles connections and receiving messages.
 	go frameOrchestrator() // Starts the orchestrator, which sends work to the clients, receives the work (frames) from the clients, then dispatches the frames to everyone.
 	select {}
 }

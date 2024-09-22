@@ -8,51 +8,62 @@ import (
 )
 
 type Client struct {
-	id *websocket.Conn
+	id   uint16
+	conn *websocket.Conn
 }
 
 func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
-		id: ws,
+		id:   uint16(clientPool.GetClientCount()),
+		conn: ws,
 	}
 }
 
 const (
-	MessageTypeWorkRequest    = 0x0 // 0000 - Represents requesting work (compute) from a client
-	MessageTypeWorkDelivery   = 0x1 // 0001 - Represents delivering frame chunk(s) to a client
-	MessageTypeFrameBroadcast = 0x2 // 0010 - Represents broadcasting frame chunk(s) to all clients
+	MessageTypeRenderTask     = 0x0 // 0000 - Represents requesting work (compute) from workers/clients
+	MessageTypeRenderResult   = 0x1 // 0001 - Represents delivering rendered frame chunk(s) from a worker/client to the orchestrator
+	MessageTypeFrameBroadcast = 0x2 // 0010 - Represents broadcasting frame chunk(s) to all workers/clients
 )
 
-func encodeFrames(works []Work) []byte {
-	encodedWorks := make([]byte, (len(works)*WorkSize)+1) // +1 to include the message type byte
-	encodedWorks[0] = MessageTypeFrameBroadcast
-	// fmt.Println(works[0].workPerformed)
-	for i, work := range works {
-		offset := i*WorkSize + 1
-		copy(encodedWorks[offset:], work.workPerformed)
+func (c *Client) handleReceivedMessage(data []byte) {
+	messageType := data[0]
+	if messageType != MessageTypeRenderResult {
+		fmt.Println("Invalid message type received")
 	}
-	return encodedWorks
+	fmt.Println("Received a rendering result")
+	renderResult, err := NewRenderResult(binary.BigEndian.Uint16(data[1:3]), data[3:])
+	frameBatchMap.AddRenderResultToFrameBatch(c.id, renderResult)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 }
 
-func sendChunksToAllClients(works []Work) {
-	encodedFrames := encodeFrames(works)
-	for client := range pool.clients {
+func sendFramesToAllClients(frames []byte) {
+	encodedFrames := make([]byte, len(frames)+1) // +1 to include the message type byte
+	encodedFrames[0] = MessageTypeFrameBroadcast
+	copy(encodedFrames[1:], frames)
+	for client := range clientPool.clients {
 		go client.sendChunk(encodedFrames)
 	}
 }
 
 func (c *Client) sendChunk(data []byte) {
-	err := c.id.WriteMessage(websocket.BinaryMessage, data[:])
+	err := c.conn.WriteMessage(websocket.BinaryMessage, data[:])
 	if err != nil {
 		fmt.Println(err)
 	}
 }
 
-func (c *Client) RequestWork(startFrame uint32, endFrame uint32) error {
-	requestedWork := make([]byte, 9) // 8 bytes for frames + 1 byte for message type
-	requestedWork[0] = MessageTypeWorkRequest
-	binary.BigEndian.PutUint32(requestedWork[1:5], startFrame)
-	binary.BigEndian.PutUint32(requestedWork[5:9], endFrame)
-	err := c.id.WriteMessage(websocket.BinaryMessage, requestedWork[:])
-	return err
+func (c *Client) RequestWork(startFrame uint32, endFrame uint32) {
+	requestedWork := make([]byte, 11) // 8 bytes for frames + 1 byte for message type + 2 bytes for RenderTask ID
+	requestedWork[0] = MessageTypeRenderTask
+	binary.BigEndian.PutUint16(requestedWork[1:3], c.id)
+	binary.BigEndian.PutUint32(requestedWork[3:7], startFrame)
+	binary.BigEndian.PutUint32(requestedWork[7:11], endFrame)
+	err := c.conn.WriteMessage(websocket.BinaryMessage, requestedWork[:])
+	if err != nil {
+		fmt.Println(err)
+	}
 }

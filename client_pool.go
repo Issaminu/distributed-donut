@@ -21,4 +21,11 @@ func (p *ClientPool) AddClient(client *Client) {
 
 func (p *ClientPool) RemoveClient(client *Client) {
 	delete(p.clients, client)
+	if len(p.clients) == 0 {
+		clientPoolIsNotEmpty <- false
+	}
+}
+
+func (p *ClientPool) GetClientCount() int {
+	return len(p.clients)
 }
