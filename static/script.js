@@ -1,33 +1,31 @@
 window.onload = function () {
   const donut = document.getElementById("donut");
 
-  // Credit to VB-17 for the origin of the following JS implementation of the spinning donut: https://github.com/GarvitSinghh/Donuts/blame/main/Donuts/donut.js
+  // Credit to a1k0n for the origin of the spinning donut: https://www.a1k0n.net/2011/07/20/donut-math.html
   const asciiframe = function (frameNumber) {
     const A = 1 + 0.07 * frameNumber;
     const B = 1 + 0.03 * frameNumber;
-
     const b = [];
     const z = [];
-
     const cA = Math.cos(A),
       sA = Math.sin(A),
       cB = Math.cos(B),
       sB = Math.sin(B);
-
     for (let k = 0; k < 1760; k++) {
-      b[k] = k % 80 === 79 ? "\n" : " ";
+      b[k] = k % 80 == 79 ? "\n" : " ";
       z[k] = 0;
     }
-
     for (let j = 0; j < 6.28; j += 0.07) {
+      // j <=> theta
       const ct = Math.cos(j),
         st = Math.sin(j);
       for (let i = 0; i < 6.28; i += 0.02) {
+        // i <=> phi
         const sp = Math.sin(i),
           cp = Math.cos(i),
-          h = ct + 2,
-          D = 1 / (sp * h * sA + st * cA + 5),
-          t = sp * h * cA - st * sA;
+          h = ct + 2, // R1 + R2*cos(theta)
+          D = 1 / (sp * h * sA + st * cA + 5), // this is 1/z
+          t = sp * h * cA - st * sA; // this is a clever factoring of some of the terms in x' and y'
 
         const x = 0 | (40 + 30 * D * (cp * h * cB - t * sB)),
           y = 0 | (12 + 15 * D * (cp * h * sB + t * cB)),
@@ -39,7 +37,6 @@ window.onload = function () {
                 sp * ct * sA -
                 st * cA -
                 cp * ct * sB));
-
         if (y < 22 && y >= 0 && x >= 0 && x < 79 && D > z[o]) {
           z[o] = D;
           b[o] = ".,-~:;=!*#$@"[N > 0 ? N : 0];
@@ -176,7 +173,6 @@ window.onload = function () {
       const renderTaskID = dv.getUint16(1);
       const startFrame = dv.getUint32(3);
       const endFrame = dv.getUint32(7);
-
       console.log(
         "Received Render Task for frames from " + startFrame + " to " + endFrame
       );
@@ -184,7 +180,7 @@ window.onload = function () {
       const renderResult = createFrames(startFrame, endFrame);
       const encodedData = encodeRenderResult(renderTaskID, renderResult);
 
-      console.log("Render Task done, sending Render Result to server...");
+      console.log("Render Task done, sending Render Result to server");
       ws.send(encodedData);
     } else if (messageType === 0x2) {
       // Received frame broadcast message

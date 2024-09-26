@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -14,11 +15,13 @@ var triggerFrameBroadcaster = make(chan bool)
 type FrameBufferSizeCheck struct {
 	trigger chan bool
 	locked  bool
+	mutex   sync.Mutex
 }
 
 var frameBufferSizeCheck = FrameBufferSizeCheck{
 	trigger: make(chan bool),
 	locked:  false,
+	mutex:   sync.Mutex{},
 }
 
 func frameOrchestrator(ctx context.Context) {
@@ -29,12 +32,14 @@ func frameOrchestrator(ctx context.Context) {
 }
 
 const (
-	FramesPerBatch          = 60                              // Frames per batch/second
-	BufferSize              = FrameSize * FramesPerBatch * 20 // Storing 20 seconds worth of frames in the buffer (WIP)
-	NumBatchesToRetrieve    = 12                              // Send 12 rendering tasks to clients.
-	FirstSecondsToBroadcast = 6                               // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
-	SecondsToBroadcast      = 4                               // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
+	FramesPerBatch          = 60                    // Frames per batch/second
+	MaxFrames               = 1000000               // 1 million frames in total
+	BufferSize              = MaxFrames * FrameSize // Buffer size in bytes
+	FirstSecondsToBroadcast = 6                     // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
+	SecondsToBroadcast      = 4                     // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 )
+
+// LOOP FOUND : 240646 !!! THE CLOSEST TO A NUMBER DIVISIBLE BY 60 IS 240646 * 4 = 962584 . WHICH IS REALLY CLOSE TO 962580. WHICH IS DIVISIBLE BY 60.
 
 func frameBroadcaster(ctx context.Context) {
 	for {
@@ -47,10 +52,14 @@ func frameBroadcaster(ctx context.Context) {
 			if len(clientPool.clients) == 0 {
 				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
 			}
-			frames := frameBuffer.GetOrderedFrames()
+			frames := frameBuffer.GetFrames()
 			sendFramesToAllClients(frames)
 			time.Sleep(SecondsToBroadcast * time.Second) // Sleep for the specified number of seconds before sending again
 			frameBuffer.RemoveSentFramesFromBuffer()
+			if isFirstBroadcast {
+				isFirstBroadcast = false
+			}
+			frameBufferSizeCheck.mutex.Unlock()
 			frameBufferSizeCheck.locked = false
 			triggerTaskDispatcher <- true
 		}
@@ -70,13 +79,20 @@ func taskDispatcher(ctx context.Context) {
 			}
 			log.Println("Task dispatcher triggered")
 
-			var currentFrame = uint32(frameBuffer.GetLength())
+			var currentFrame = uint32(frameBuffer.GetNextFrameNumber()) + 1
 
-			for range NumBatchesToRetrieve {
+			batchesToFetch := SecondsToBroadcast
+			if isFirstBroadcast {
+				batchesToFetch = FirstSecondsToBroadcast
+			}
+			for range batchesToFetch {
 				// Select a random client to do the work needed for the current batch
 				client := _TEMP_getRandomItemFromMap(clientPool.clients)
-				startFrame := currentFrame
-				endFrame := currentFrame + FramesPerBatch - 1
+				startFrame := (currentFrame) % MaxFrames
+				endFrame := (currentFrame + FramesPerBatch - 1) % MaxFrames
+				if endFrame == 0 {
+					endFrame = MaxFrames
+				}
 				log.Println("Sending work for frames", startFrame, "to", endFrame, "to client", client.id)
 				frameBatch := NewFrameBatchMetadata(client.id, startFrame, endFrame)
 				frameBatchMap.AddFrameBatch(frameBatch)
@@ -111,11 +127,9 @@ func frameBufferSizeChecker(ctx context.Context) {
 				continue
 			}
 			if frameBuffer.IsBufferSizeSufficientForBroadcast(isFirstBroadcast) {
+				frameBufferSizeCheck.mutex.Lock()
 				frameBufferSizeCheck.locked = true
 				log.Println("Gathered enough frames, triggering a broadcast...")
-				if isFirstBroadcast {
-					isFirstBroadcast = false
-				}
 				triggerFrameBroadcaster <- true
 			}
 		}
