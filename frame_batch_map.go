@@ -6,13 +6,13 @@ import (
 )
 
 type FrameBatchMap struct {
-	frameBatches map[uint16]map[uint16]FrameBatchMetadata // Map<client ID, Map<render task ID, frame batch metadata>>
+	frameBatches map[uint32]map[uint32]FrameBatchMetadata // Map<client ID, Map<render task ID, frame batch metadata>>
 	mutex        sync.RWMutex
 }
 
 func NewFrameBatchMap() *FrameBatchMap {
 	return &FrameBatchMap{
-		frameBatches: make(map[uint16]map[uint16]FrameBatchMetadata),
+		frameBatches: make(map[uint32]map[uint32]FrameBatchMetadata),
 	}
 }
 
@@ -22,18 +22,24 @@ func (fbm *FrameBatchMap) AddFrameBatch(frameBatch *FrameBatchMetadata) {
 	fbm.mutex.Lock()
 	defer fbm.mutex.Unlock()
 	if _, ok := fbm.frameBatches[frameBatch.ClientID]; !ok {
-		fbm.frameBatches[frameBatch.ClientID] = make(map[uint16]FrameBatchMetadata)
+		fbm.frameBatches[frameBatch.ClientID] = make(map[uint32]FrameBatchMetadata)
 	}
 	fbm.frameBatches[frameBatch.ClientID][frameBatch.renderTask.id] = *frameBatch
 }
 
-func (fbm *FrameBatchMap) GetFrameBatches(ClientID uint16) map[uint16]FrameBatchMetadata {
+func (fbm *FrameBatchMap) GetFrameBatches(ClientID uint32) map[uint32]FrameBatchMetadata {
 	fbm.mutex.RLock()
 	defer fbm.mutex.RUnlock()
 	return fbm.frameBatches[ClientID]
 }
 
-func (fbm *FrameBatchMap) SaveRenderResult(clientID uint16, renderResult *RenderResult) {
+func (fbm *FrameBatchMap) GetLength(ClientID uint32) uint32 {
+	fbm.mutex.RLock()
+	defer fbm.mutex.RUnlock()
+	return uint32(len(fbm.frameBatches[ClientID]))
+}
+
+func (fbm *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *RenderResult) {
 	fbm.mutex.Lock()
 	defer fbm.mutex.Unlock()
 	if _, ok := fbm.frameBatches[clientID][renderResult.id]; !ok {

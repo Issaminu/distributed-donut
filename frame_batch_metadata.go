@@ -16,14 +16,14 @@ const FrameSize = 880                        // bytes
 const BatchSize = FrameSize * FramesPerBatch // bytes, FrameBatch also has some metadata that is stripped when broadcasting the frames
 
 type FrameBatchMetadata struct {
-	ClientID   uint16
+	ClientID   uint32
 	renderTask RenderTask
 	completed  bool
 }
 
-func NewFrameBatchMetadata(ClientID uint16, startFrame uint32, endFrame uint32) *FrameBatchMetadata {
-	id := len(frameBatchMap.GetFrameBatches(ClientID))
-	renderTask := NewRenderTask(uint16(id), startFrame, endFrame)
+func NewFrameBatchMetadata(ClientID uint32, startFrame uint32, endFrame uint32) *FrameBatchMetadata {
+	id := frameBatchMap.GetLength(ClientID)
+	renderTask := NewRenderTask(id, startFrame, endFrame)
 	return &FrameBatchMetadata{
 		ClientID:   ClientID,
 		renderTask: *renderTask,

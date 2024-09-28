@@ -9,14 +9,14 @@ import (
 )
 
 type Client struct {
-	id    uint16
+	id    uint32
 	conn  *websocket.Conn
 	mutex sync.Mutex
 }
 
 func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
-		id:   uint16(clientPool.GetClientCount()),
+		id:   uint32(clientPool.GetClientCount()),
 		conn: ws,
 	}
 }
@@ -28,7 +28,7 @@ const (
 )
 
 func (c *Client) handleReceivedMessage(data []byte) {
-	if len(data) < 1 {
+	if len(data) == 0 {
 		log.Println("Received empty message")
 		return
 	}
@@ -63,12 +63,12 @@ func (c *Client) sendFrames(data []byte) {
 	}
 }
 
-func (c *Client) RequestWork(renderTaskID uint16, startFrame uint32, endFrame uint32) {
-	requestedWork := make([]byte, 11) // 8 bytes for frames + 1 byte for message type + 2 bytes for RenderTask ID
+func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame uint32) {
+	requestedWork := make([]byte, 13) // 8 bytes for frames + 1 byte for message type + 4 bytes for RenderTask ID
 	requestedWork[0] = MessageTypeRenderTask
-	binary.BigEndian.PutUint16(requestedWork[1:3], renderTaskID)
-	binary.BigEndian.PutUint32(requestedWork[3:7], startFrame)
-	binary.BigEndian.PutUint32(requestedWork[7:11], endFrame)
+	binary.BigEndian.PutUint32(requestedWork[1:5], renderTaskID)
+	binary.BigEndian.PutUint32(requestedWork[5:9], startFrame)
+	binary.BigEndian.PutUint32(requestedWork[9:13], endFrame)
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	err := c.conn.WriteMessage(websocket.BinaryMessage, requestedWork[:])

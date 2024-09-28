@@ -1,12 +1,12 @@
 package main
 
 type RenderTask struct {
-	id         uint16
+	id         uint32
 	startFrame uint32
 	endFrame   uint32
 }
 
-func NewRenderTask(id uint16, startFrame uint32, endFrame uint32) *RenderTask {
+func NewRenderTask(id uint32, startFrame uint32, endFrame uint32) *RenderTask {
 	return &RenderTask{
 		id:         id,
 		startFrame: startFrame,

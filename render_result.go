@@ -6,13 +6,13 @@ import (
 )
 
 type RenderResult struct {
-	id     uint16
+	id     uint32
 	frames [BatchSize]byte
 }
 
 func NewRenderResult(data []byte) (*RenderResult, error) {
-	id := binary.BigEndian.Uint16(data[0:2])
-	frames := data[2:]
+	id := binary.BigEndian.Uint32(data[0:4])
+	frames := data[4:]
 
 	if len(frames) != BatchSize {
 		return nil, errors.New("invalid frame batch size received in NewRenderResult()")

@@ -74,12 +74,15 @@ function encodeRenderResult(renderTaskID, frames) {
     }
     return bytes;
   });
-  const result = new Uint8Array(encodedFrames.length + 3); // +3 to include the message type byte and the renderTaskID
-  result.set(encodedFrames, 3);
+  const result = new Uint8Array(encodedFrames.length + 5); // 1 for message type, 4 for renderTaskID, and the rest is the encoded frames
+
+  result.set(encodedFrames, 5);
   result[0] = 0x1; // messageType: MessageTypeRenderResult
   // Big endian encoding
-  result[1] = (renderTaskID >> 8) & 0xff;
-  result[2] = renderTaskID & 0xff;
+  result[1] = (renderTaskID >> 24) & 0xff;
+  result[2] = (renderTaskID >> 16) & 0xff;
+  result[3] = (renderTaskID >> 8) & 0xff;
+  result[4] = renderTaskID & 0xff;
   return result;
 }
 

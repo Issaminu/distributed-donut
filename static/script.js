@@ -1,30 +1,24 @@
 window.onload = function () {
+  const BufferSize = 100;
   class CircularBuffer {
-    constructor(bufferLength) {
-      this.buffer = new Array(bufferLength);
+    constructor() {
+      this.frames = new Array(BufferSize);
       this.head = 0;
-      this.size = 0;
-      this.bufferLength = bufferLength;
     }
 
-    push(item) {
-      if (this.size === this.bufferLength) {
-        // Buffer is full, overwrite the oldest item
-        this.head = (this.head + 1) % this.bufferLength;
-      } else {
-        this.size++;
+    push(frames) {
+      this.head = (this.head + 1) % BufferSize;
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        const newHeadPosition = (this.head + 1) % BufferSize;
+        this.frames[newHeadPosition] = frame;
+        this.head = newHeadPosition;
       }
-
-      const insertIndex = (this.head + this.size - 1) % this.bufferLength;
-      this.buffer[insertIndex] = item;
     }
 
     get(index) {
-      if (index < 0 || index >= this.size) {
-        return null;
-      }
-      const actualIndex = (this.head + index) % this.bufferLength;
-      return this.buffer[actualIndex];
+      const actualIndex = (this.head + index) % BufferSize;
+      return this.frames[actualIndex];
     }
   }
 
@@ -34,7 +28,7 @@ window.onload = function () {
     let i = 0;
     setInterval(() => {
       donut.innerHTML = frameBuffer.get(i);
-      i = Math.floor((i + 1) % frameBuffer.size);
+      ++i;
     }, 59);
   }
 
@@ -77,7 +71,7 @@ window.onload = function () {
   ws.onopen = function () {
     console.log("Connection established");
   };
-  const frameBuffer = new CircularBuffer(20 * 60);
+  const frameBuffer = new CircularBuffer();
 
   const worker = new Worker("donut-worker.js");
   worker.onmessage = function (e) {
@@ -94,9 +88,10 @@ window.onload = function () {
     const messageType = dv.getUint8(0);
 
     if (messageType === 0x0) {
-      const renderTaskID = dv.getUint16(1);
-      const startFrame = dv.getUint32(3);
-      const endFrame = dv.getUint32(7);
+      const renderTaskID = dv.getUint32(1);
+      const startFrame = dv.getUint32(5);
+      const endFrame = dv.getUint32(9);
+
       console.log(
         "Received Render Task for frames from " + startFrame + " to " + endFrame
       );
@@ -109,7 +104,7 @@ window.onload = function () {
       const decodedFrames = decodeFrames(encodedData);
 
       // Add the decoded frames to the circular buffer
-      decodedFrames.forEach((frame) => frameBuffer.push(frame));
+      frameBuffer.push(decodedFrames);
 
       // Start drawing the frames to the canvas
       drawFramesToCanvas();
