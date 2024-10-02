@@ -25,8 +25,7 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 		return
 	}
 	if fb.head == fb.tail && fb.head != 0 {
-		log.Println("WARNING: Frame buffer is full, dropping frame")
-		return
+		log.Println("WARNING: Frame buffer is empty")
 	}
 
 	for i := 0; i < BatchSize; i += FrameSize {
