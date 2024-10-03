@@ -2,15 +2,12 @@ window.onload = function () {
   const FramesPerBatch = 60;
   const BufferSize = 20 * FramesPerBatch; // 20 seconds worth of frames
   const DonutStringLength = 1760;
-  const NormalSpeed = 1000 / FramesPerBatch;
-  const FastSpeed = 14;
+  const IntervalBetweenFrames = 1000 / FramesPerBatch;
 
   const FirstSecondsToBroadcast = 6;
   const SecondsToBroadcast = 4;
   const ClientBufferWindow = FirstSecondsToBroadcast - SecondsToBroadcast;
 
-  let speed = NormalSpeed;
-  let speedUpDrawing = false;
   class CircularBuffer {
     constructor() {
       this.frames = new Array(BufferSize);
@@ -19,12 +16,7 @@ window.onload = function () {
     }
 
     push(frames) {
-      console.log("Pushing, current delta: ", this.getDelta());
-
-      if (!this.isOnSchedule()) {
-        console.log("We're behind schedule, speeding up.");
-        speedUpDrawing = true;
-      }
+      console.log("Current delta: ", frameBuffer.getDelta());
 
       let newHeadPosition = 0;
       for (let i = 0; i < frames.length; i++) {
@@ -40,10 +32,6 @@ window.onload = function () {
       return frame;
     }
 
-    isOnSchedule() {
-      return this.getDelta() <= ClientBufferWindow;
-    }
-
     getDelta() {
       if (this.head >= this.tail) {
         return (this.head - this.tail) / FramesPerBatch;
@@ -51,13 +39,10 @@ window.onload = function () {
         return (BufferSize - this.tail + this.head) / FramesPerBatch;
       }
     }
-
-    printDelta() {
-      console.log("Delta in seconds: ", this.getDelta());
-    }
   }
 
   const donut = document.getElementById("donut");
+
   function drawFramesToCanvas() {
     let lastFrameTime = 0;
 
@@ -66,23 +51,11 @@ window.onload = function () {
       const deltaTime = currentTime - lastFrameTime;
 
       // If enough time has passed, draw the next frame
-      console.log("Current speed: ", speed);
-      if (deltaTime >= speed) {
+      if (deltaTime >= IntervalBetweenFrames) {
         if (frameBuffer.head !== frameBuffer.tail) {
           const newFrame = frameBuffer.get();
           if (newFrame !== undefined) {
             donut.innerHTML = newFrame;
-          }
-        }
-
-        // Adjust speed if needed
-        if (speedUpDrawing) {
-          if (!frameBuffer.isOnSchedule()) {
-            speed = FastSpeed;
-          } else {
-            console.log("Back on schedule, resetting speed to normal");
-            speedUpDrawing = false;
-            speed = NormalSpeed;
           }
         }
         // Update last frame time
@@ -178,7 +151,7 @@ window.onload = function () {
 
     ws.onclose = function () {
       console.log("Connection closed. Attempting to reconnect...");
-      setTimeout(setupWebSocket, 1000); // Try to reconnect after 1 second
+      setTimeout(setupWebSocket, 3000); // Try to reconnect after 1 second
     };
 
     ws.onerror = function (error) {
