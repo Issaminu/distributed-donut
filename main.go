@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -31,7 +32,7 @@ func websocketHandler(ctx context.Context) {
 	}()
 
 	log.Println("Server started on :8080")
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Println("HTTP server error:", err)
 	}
 }
