@@ -1,6 +1,16 @@
 window.onload = function () {
-  const BufferSize = 20 * 60; // 20 seconds worth of frames
+  const FramesPerBatch = 60;
+  const BufferSize = 20 * FramesPerBatch; // 20 seconds worth of frames
+  const DonutStringLength = 1760;
+  const NormalSpeed = 1000 / FramesPerBatch;
+  const FastSpeed = 14;
 
+  const FirstSecondsToBroadcast = 6;
+  const SecondsToBroadcast = 4;
+  const ClientBufferWindow = FirstSecondsToBroadcast - SecondsToBroadcast;
+
+  let speed = NormalSpeed;
+  let speedUpDrawing = false;
   class CircularBuffer {
     constructor() {
       this.frames = new Array(BufferSize);
@@ -9,9 +19,12 @@ window.onload = function () {
     }
 
     push(frames) {
-      // console.log("Current head: ", this.head);
-      // console.log("Current Tail: ", this.tail);
-      // console.log("Length: ", this.frames.length);
+      console.log("Pushing, current delta: ", this.getDelta());
+
+      if (!this.isOnSchedule()) {
+        console.log("We're behind schedule, speeding up.");
+        speedUpDrawing = true;
+      }
 
       let newHeadPosition = 0;
       for (let i = 0; i < frames.length; i++) {
@@ -19,7 +32,6 @@ window.onload = function () {
         this.frames[newHeadPosition] = frames[i];
         this.head = newHeadPosition;
       }
-      // console.log("New head: ", this.head);
     }
 
     get() {
@@ -27,17 +39,62 @@ window.onload = function () {
       this.tail = (this.tail + 1) % BufferSize;
       return frame;
     }
+
+    isOnSchedule() {
+      return this.getDelta() <= ClientBufferWindow;
+    }
+
+    getDelta() {
+      if (this.head >= this.tail) {
+        return (this.head - this.tail) / FramesPerBatch;
+      } else {
+        return (BufferSize - this.tail + this.head) / FramesPerBatch;
+      }
+    }
+
+    printDelta() {
+      console.log("Delta in seconds: ", this.getDelta());
+    }
   }
 
   const donut = document.getElementById("donut");
   function drawFramesToCanvas() {
-    let newFrame;
-    setInterval(() => {
-      if (frameBuffer.head === frameBuffer.tail) return;
-      newFrame = frameBuffer.get();
-      if (newFrame === undefined) return;
-      donut.innerHTML = newFrame;
-    }, 1000 / 60);
+    let lastFrameTime = 0;
+
+    function animate(currentTime) {
+      // Calculate time since last frame
+      const deltaTime = currentTime - lastFrameTime;
+
+      // If enough time has passed, draw the next frame
+      console.log("Current speed: ", speed);
+      if (deltaTime >= speed) {
+        if (frameBuffer.head !== frameBuffer.tail) {
+          const newFrame = frameBuffer.get();
+          if (newFrame !== undefined) {
+            donut.innerHTML = newFrame;
+          }
+        }
+
+        // Adjust speed if needed
+        if (speedUpDrawing) {
+          if (!frameBuffer.isOnSchedule()) {
+            speed = FastSpeed;
+          } else {
+            console.log("Back on schedule, resetting speed to normal");
+            speedUpDrawing = false;
+            speed = NormalSpeed;
+          }
+        }
+        // Update last frame time
+        lastFrameTime = currentTime;
+      }
+
+      // Schedule the next frame
+      requestAnimationFrame(animate);
+    }
+
+    // Start the animation loop
+    requestAnimationFrame(animate);
   }
   drawFramesToCanvas();
 
@@ -62,7 +119,7 @@ window.onload = function () {
 
       currentFrame += char1 + char2;
 
-      if (currentFrame.length === 1760) {
+      if (currentFrame.length === DonutStringLength) {
         decodedFrames.push(currentFrame);
         currentFrame = "";
       }
@@ -99,9 +156,9 @@ window.onload = function () {
         const endFrame = dv.getUint32(9);
 
         console.log(
-          "Received Render Task for frames from ",
+          "Received Render Task for frames from",
           startFrame,
-          " to ",
+          "to",
           endFrame
         );
         worker.postMessage({ renderTaskID, startFrame, endFrame });
