@@ -9,7 +9,7 @@ const asciiframe = function (frameNumber) {
     cB = Math.cos(B),
     sB = Math.sin(B);
   for (let k = 0; k < 1760; k++) {
-    b[k] = k % 80 == 79 ? "\n" : " ";
+    b[k] = k % 80 === 79 ? "\n" : " ";
     z[k] = 0;
   }
   for (let j = 0; j < 6.28; j += 0.07) {
