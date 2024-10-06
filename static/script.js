@@ -16,7 +16,7 @@ window.onload = function () {
     }
 
     push(frames) {
-      console.log("Current delta: ", frameBuffer.getDelta());
+      console.log("Current delta: ", this.getDelta());
 
       let newHeadPosition = 0;
       for (let i = 0; i < frames.length; i++) {
@@ -41,6 +41,7 @@ window.onload = function () {
     }
   }
 
+  const frameBuffer = new CircularBuffer();
   const donut = document.getElementById("donut");
 
   function drawFramesToCanvas() {
@@ -161,8 +162,6 @@ window.onload = function () {
   }
 
   setupWebSocket(); // Initial connection attempt
-
-  const frameBuffer = new CircularBuffer();
 
   const worker = new Worker("donut-worker.js");
   worker.onmessage = function (e) {
