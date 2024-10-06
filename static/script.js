@@ -107,7 +107,9 @@ window.onload = function () {
   }
 
   function connectToServer() {
-    return new WebSocket(`ws://${window.location.host}/connect`);
+    const host = window.location.host;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return new WebSocket(`${protocol}//${host}/connect`);
   }
 
   let ws;
