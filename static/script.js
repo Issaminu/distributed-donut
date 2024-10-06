@@ -106,7 +106,7 @@ window.onload = function () {
   }
 
   function connectToServer() {
-    return new WebSocket("ws://localhost:8080/connect");
+    return new WebSocket(`ws://${window.location.host}/connect`);
   }
 
   let ws;
