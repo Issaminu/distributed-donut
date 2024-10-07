@@ -17,7 +17,7 @@ var upgrader = websocket.Upgrader{}
 var clientPool = NewClientPool()
 
 func websocketHandler(ctx context.Context) {
-	http.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleNewConnection(ctx, w, r)
 	})
 	http.Handle("/", http.FileServer(http.Dir("./static")))
