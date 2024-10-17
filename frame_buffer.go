@@ -27,14 +27,14 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 		return errors.New("start frame is greater than end frame")
 	}
 
-	startFramePosition := (startFrame * FrameSize) % BufferSize
-	endFramePosition := (endFrame * FrameSize) % BufferSize
+	batchStartIndex := (startFrame * FrameSize) % BufferSize
+	batchEndIndex := (endFrame*FrameSize + FrameSize) % BufferSize // `+FrameSize` because `endFrame*FrameSize` defines where the last frame starts. But what we actually meed os where it ends. i.e. the position of the last byte of the frameBatch
 
-	if endFramePosition-startFramePosition+FrameSize != BatchSize { // `+FrameSize` because len(arr) == end-begin+1 , here `+FrameSize` is that `+1`
+	if batchEndIndex-batchStartIndex != BatchSize {
 		return errors.New("received incorrect batch size")
 	}
 
-	if startFramePosition < fb.tail {
+	if batchStartIndex < fb.tail {
 		return errors.New("appending frames that should have been already sent out")
 	}
 
@@ -42,9 +42,11 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 		return errors.New("framebuffer length is 0")
 	}
 
-	copy(fb.buffer[startFramePosition:endFramePosition], data[:])
+	copy(fb.buffer[batchStartIndex:batchEndIndex], data[:])
 
-	fb.head = max(fb.head, endFramePosition)
+	fb.head = max(fb.head, batchEndIndex)
+	log.Println("startFramePosition", batchStartIndex)
+	log.Println("endFramePosition", batchEndIndex)
 
 	frameBufferSizeCheck.trigger <- true
 	return nil

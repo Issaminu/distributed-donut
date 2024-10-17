@@ -67,7 +67,7 @@ func taskDispatcher(ctx context.Context) {
 			}
 			log.Println("Task dispatcher triggered")
 
-			var currentFrame = uint32(frameBuffer.GetNextFrameNumber()) + 1
+			var currentFrame = uint32(frameBuffer.GetNextFrameNumber())
 
 			batchesToFetch := SecondsToBroadcast
 			if isFirstBroadcast {
