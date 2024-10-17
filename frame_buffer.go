@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 )
 
@@ -19,25 +20,34 @@ func NewFrameBuffer() *FrameBuffer {
 
 var frameBuffer = NewFrameBuffer()
 
-func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[BatchSize]byte) {
-	if (endFrame - startFrame + 1) != FramesPerBatch {
-		log.Println("WARNING: Received incorrect batch size")
-		return
+func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[BatchSize]byte) error {
+	log.Println("====== Adding frames from", startFrame, "to", endFrame, "======")
+
+	if startFrame > endFrame {
+		return errors.New("start frame is greater than end frame")
 	}
+
+	startFramePosition := (startFrame * FrameSize) % BufferSize
+	endFramePosition := (endFrame * FrameSize) % BufferSize
+
+	if endFramePosition-startFramePosition+FrameSize != BatchSize { // `+FrameSize` because len(arr) == end-begin+1 , here `+FrameSize` is that `+1`
+		return errors.New("received incorrect batch size")
+	}
+
+	if startFramePosition < fb.tail {
+		return errors.New("appending frames that should have been already sent out")
+	}
+
 	if fb.head == fb.tail && fb.head != 0 {
-		log.Println("WARNING: Frame buffer is empty")
+		return errors.New("framebuffer length is 0")
 	}
 
-	for i := 0; i < BatchSize; i += FrameSize {
-		newHeadPosition := (fb.head + FrameSize) % BufferSize
+	copy(fb.buffer[startFramePosition:endFramePosition], data[:])
 
-		startPosition := min((fb.head)%BufferSize, newHeadPosition)
-		endPosition := max((fb.head)%BufferSize, newHeadPosition)
-		copy(fb.buffer[startPosition:endPosition], data[i:i+FrameSize])
-		fb.head = newHeadPosition
-	}
+	fb.head = max(fb.head, endFramePosition)
 
 	frameBufferSizeCheck.trigger <- true
+	return nil
 }
 
 func (fb *FrameBuffer) GetFrames() []byte {
@@ -58,12 +68,11 @@ func (fb *FrameBuffer) RemoveSentFramesFromBuffer() {
 	if framesToRemove > bufferLength {
 		framesToRemove = bufferLength
 	}
-
 	fb.tail = (fb.tail + framesToRemove*FrameSize) % BufferSize
 	frameBufferSizeCheck.trigger <- true
 }
 
-func (fb *FrameBuffer) GetLength() uint32 {
+func (fb *FrameBuffer) GetLength() uint32 { // Length is in number of frames, not bytes
 	if fb.head >= fb.tail {
 		return (fb.head - fb.tail) / FrameSize
 	}
@@ -74,10 +83,10 @@ func (fb *FrameBuffer) GetNextFrameNumber() uint32 {
 	return (fb.head / FrameSize) % BufferSize
 }
 
-func (fb *FrameBuffer) IsBufferSizeSufficientForBroadcast(isFirstBroadcast bool) bool {
-	requiredFrames := SecondsToBroadcast
+func (fb *FrameBuffer) IsBufferSizeSufficientForBroadcast() bool {
+	requiredFrames := SecondsToBroadcast * FramesPerBatch
 	if isFirstBroadcast {
-		requiredFrames = FirstSecondsToBroadcast
+		requiredFrames = FirstSecondsToBroadcast * FramesPerBatch
 	}
-	return fb.GetLength() >= uint32(requiredFrames*FramesPerBatch)
+	return fb.GetLength() >= uint32(requiredFrames)
 }

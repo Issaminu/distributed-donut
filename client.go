@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"log"
 	"sync"
 
@@ -9,15 +10,17 @@ import (
 )
 
 type Client struct {
-	id    uint32
-	conn  *websocket.Conn
-	mutex sync.Mutex
+	id             uint32
+	conn           *websocket.Conn
+	mutex          sync.Mutex
+	numRenderTasks uint32
 }
 
 func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
-		id:   uint32(clientPool.GetClientCount()),
-		conn: ws,
+		id:             uint32(clientPool.GetClientCount()),
+		conn:           ws,
+		numRenderTasks: 0,
 	}
 }
 
@@ -27,10 +30,9 @@ const (
 	MessageTypeFrameBroadcast = 0x2 // 0010 - Represents broadcasting frame batch(s) to all workers/clients
 )
 
-func (c *Client) handleReceivedMessage(data []byte) {
+func (c *Client) HandleReceivedMessage(data []byte) error {
 	if len(data) == 0 {
-		log.Println("Received empty message")
-		return
+		return errors.New("received empty message")
 	}
 	messageType := data[0]
 	if messageType != MessageTypeRenderResult {
@@ -38,11 +40,17 @@ func (c *Client) handleReceivedMessage(data []byte) {
 	}
 	renderResult, err := NewRenderResult(data[1:])
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
-	frameBatchMap.SaveRenderResult(c.id, renderResult)
+	return frameBatchMap.SaveRenderResult(c.id, renderResult)
+}
 
+func (c *Client) GenerateNewRenderTaskID() uint32 {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	newRenderTaskID := c.numRenderTasks
+	c.numRenderTasks++
+	return newRenderTaskID
 }
 
 func sendFramesToAllClients(frames []byte) {

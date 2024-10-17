@@ -132,7 +132,9 @@ window.onload = function () {
         const endFrame = dv.getUint32(9);
 
         console.log(
-          "Received Render Task for frames from",
+          "Received Render Task",
+          renderTaskID,
+          "for frames from",
           startFrame,
           "to",
           endFrame

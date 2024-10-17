@@ -66,7 +66,12 @@ func handleNewConnection(ctx context.Context, w http.ResponseWriter, r *http.Req
 				clientPool.RemoveClient(client)
 				return
 			}
-			client.handleReceivedMessage(incomingMessage)
+			err = client.HandleReceivedMessage(incomingMessage)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
 		}
 	}
 }
