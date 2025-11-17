@@ -40,10 +40,7 @@ Uses binary WebSocket messages with three message types:
 - **FrameBroadcast** (0x2): Server → All Clients frame distribution
 
 ### ASCII Donut Algorithm
-- Calculates 3D torus coordinates and projects to 2D
-- Implements lighting based on surface normals
-- Uses Z-buffer for depth sorting
-- Maps to ASCII character set: `.,-~:;=!*#$@ \n`
+Uses a1k0n's incredible [donut.c](https://www.a1k0n.net/2011/07/20/donut-math.html).
 
 ### Frame Encoding/Decoding
 - Efficient compression: Each character mapped to 4-bit index
@@ -71,16 +68,3 @@ Uses binary WebSocket messages with three message types:
 2. **Run Server**: `go run *.go`
 3. **Open Browser**: Navigate to `http://localhost:8080`
 4. **Watch Magic**: See the distributed ASCII donut animation!
-
-## Use Cases
-
-This project serves as an excellent demonstration of:
-- Distributed systems concepts
-- WebSocket binary protocols
-- Go concurrency patterns (goroutines, channels)
-- Browser-based parallel computing
-- Real-time synchronization techniques
-
----
-
-*Distributed Donut showcases how Go's concurrency primitives can orchestrate a distributed system where web browsers collaborate to perform computational work, demonstrating efficient network protocols and creative use of browser capabilities for parallel computing.*
