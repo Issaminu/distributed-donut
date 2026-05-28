@@ -38,10 +38,6 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 		return errors.New("appending frames that should have been already sent out")
 	}
 
-	if fb.head == fb.tail && fb.head != 0 {
-		return errors.New("framebuffer length is 0")
-	}
-
 	copy(fb.buffer[batchStartIndex:batchEndIndex], data[:])
 
 	fb.head = max(fb.head, batchEndIndex)
@@ -63,13 +59,7 @@ func (fb *FrameBuffer) GetFrames() []byte {
 }
 
 func (fb *FrameBuffer) RemoveSentFramesFromBuffer() {
-	framesToRemove := uint32(SecondsToBroadcast * FramesPerBatch)
-
-	bufferLength := fb.GetLength()
-	if framesToRemove > bufferLength {
-		framesToRemove = bufferLength
-	}
-	fb.tail = (fb.tail + framesToRemove*FrameSize) % BufferSize
+	fb.tail = fb.head
 }
 
 func (fb *FrameBuffer) GetLength() uint32 { // Length is in number of frames, not bytes
