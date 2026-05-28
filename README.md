@@ -65,6 +65,6 @@ Uses a1k0n's incredible [donut.c](https://www.a1k0n.net/2011/07/20/donut-math.ht
 ## Getting Started
 
 1. **Prerequisites**: Go 1.x installed
-2. **Run Server**: `go run *.go`
+2. **Run Server**: `go run .`
 3. **Open Browser**: Navigate to `http://localhost:8080`
 4. **Watch Magic**: See the distributed ASCII donut animation!
