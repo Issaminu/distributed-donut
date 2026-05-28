@@ -42,12 +42,12 @@ func frameBroadcaster(ctx context.Context) {
 			frames := frameBuffer.GetFrames()
 			// logChan <- frames
 			sendFramesToAllClients(frames)
-			time.Sleep(SecondsToBroadcast * time.Second) // Sleep for the specified number of seconds before sending again
 			frameBuffer.RemoveSentFramesFromBuffer()
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
-			triggerTaskDispatcher <- true
+			triggerTaskDispatcher <- true                // Kick off the next round now so dispatch runs in parallel with the sleep below
+			time.Sleep(SecondsToBroadcast * time.Second) // Sleep before allowing the next broadcast, so clients consume what we just sent
 		}
 	}
 }
