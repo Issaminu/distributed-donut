@@ -48,7 +48,6 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 	log.Println("startFramePosition", batchStartIndex)
 	log.Println("endFramePosition", batchEndIndex)
 
-	frameBufferSizeCheck.trigger <- true
 	return nil
 }
 
@@ -71,7 +70,6 @@ func (fb *FrameBuffer) RemoveSentFramesFromBuffer() {
 		framesToRemove = bufferLength
 	}
 	fb.tail = (fb.tail + framesToRemove*FrameSize) % BufferSize
-	frameBufferSizeCheck.trigger <- true
 }
 
 func (fb *FrameBuffer) GetLength() uint32 { // Length is in number of frames, not bytes
@@ -83,12 +81,4 @@ func (fb *FrameBuffer) GetLength() uint32 { // Length is in number of frames, no
 
 func (fb *FrameBuffer) GetNextFrameNumber() uint32 {
 	return (fb.head / FrameSize) % BufferSize
-}
-
-func (fb *FrameBuffer) IsBufferSizeSufficientForBroadcast() bool {
-	requiredFrames := SecondsToBroadcast * FramesPerBatch
-	if isFirstBroadcast {
-		requiredFrames = FirstSecondsToBroadcast * FramesPerBatch
-	}
-	return fb.GetLength() >= uint32(requiredFrames)
 }

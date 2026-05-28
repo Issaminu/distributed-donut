@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -13,8 +14,6 @@ var triggerFrameBroadcaster = make(chan bool, 1)
 var logChan = make(chan []byte)
 
 func frameOrchestrator(ctx context.Context) {
-	frameBufferSizeCheck.ready <- true // Set frameBufferSizeCheck to be ready for the first time
-	go frameBufferSizeChecker(ctx)
 	go frameBroadcaster(ctx)
 	go taskDispatcher(ctx)
 	go consoleDrawer(ctx)
@@ -48,7 +47,6 @@ func frameBroadcaster(ctx context.Context) {
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
-			frameBufferSizeCheck.ready <- true
 			triggerTaskDispatcher <- true
 		}
 	}
@@ -73,13 +71,21 @@ func taskDispatcher(ctx context.Context) {
 			if isFirstBroadcast {
 				batchesToFetch = FirstSecondsToBroadcast
 			}
+			var wg sync.WaitGroup
 			for range batchesToFetch {
 				// Select a random client to do the work needed for the current batch
 				startFrame := (currentFrame) % MaxFrames
 				endFrame := (currentFrame + FramesPerBatch - 1) % MaxFrames
 				currentFrame += FramesPerBatch
-				go dispatchRenderTask(startFrame, endFrame, 1, 0, nil)
+				wg.Add(1)
+				go func(start, end uint32) {
+					defer wg.Done()
+					dispatchRenderTask(start, end, 1, 0, nil)
+				}(startFrame, endFrame)
 			}
+			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
+			log.Println("Gathered enough frames, triggering a broadcast...")
+			triggerFrameBroadcaster <- true
 		}
 	}
 }
@@ -120,23 +126,4 @@ func _TEMP_getRandomItemFromMap(m map[*Client]bool) *Client { // This will get r
 
 	// Return the random key and the corresponding value
 	return randomKey
-}
-
-func frameBufferSizeChecker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-frameBufferSizeCheck.trigger: // No `default` on this `select`, this is blocking execution on this thread while waiting for a message on the channel
-			if frameBuffer.IsBufferSizeSufficientForBroadcast() {
-				select {
-				case <-frameBufferSizeCheck.ready:
-					log.Println("Gathered enough frames, triggering a broadcast...")
-					triggerFrameBroadcaster <- true
-				default: // Default is important, as in Go, it makes the `case` above not wait until it's ready. Otherwise, if we didn't have a `default`, we'd block execution while the channel is empty
-					continue
-				}
-			}
-		}
-	}
 }
