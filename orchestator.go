@@ -8,17 +8,11 @@ import (
 	"time"
 )
 
-var triggerTaskDispatcher = make(chan bool, 1)
-var isFirstBroadcast = true
-var triggerFrameBroadcaster = make(chan bool, 1)
 var logChan = make(chan []byte)
 
 func frameOrchestrator(ctx context.Context) {
 	go frameBroadcaster(ctx)
 	go taskDispatcher(ctx)
-	// go consoleDrawer(ctx)
-	go frameBuffer.frameBufferMonitor(ctx)
-	triggerTaskDispatcher <- true // Trigger the taskDispatcher for the first time
 }
 
 const (
@@ -26,53 +20,61 @@ const (
 	MaxBatches              = 30 * 60                     // 1800 batches/seconds ~= 30 Minutes (Could go longer but it would consume much more memory for no benefit)
 	MaxFrames               = MaxBatches * FramesPerBatch // Maximum amount of frames we can hold in the buffer
 	BufferSize              = MaxFrames * FrameSize       // Buffer size in bytes
-	FirstSecondsToBroadcast = 6                           // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
-	SecondsToBroadcast      = 4                           // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
+	firstSecondsToBroadcast = 6                           // For the very first broadcast, send 6 seconds worth of frames. Given secondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
+	secondsToBroadcast      = 4                           // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 )
 
 func frameBroadcaster(ctx context.Context) {
+	var isFirstBroadcast = true
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Frame broadcaster shutting down...")
 			return
-		case <-triggerFrameBroadcaster:
+		default:
+			seconds := secondsToBroadcast
+			if isFirstBroadcast {
+				seconds = firstSecondsToBroadcast
+			}
+
+			frameBuffer.WaitUntilBufferSizeEnoughForBroadcast(seconds) // Park if the buffer is dry
+
 			log.Println("Gathered enough frames, triggering a broadcast...")
 			if len(clientPool.clients) == 0 {
 				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
 			}
-			frames := frameBuffer.GetFramesToBroadcast()
+
+			frames := frameBuffer.GetFramesToBroadcast(seconds)
 			sendFramesToAllClients(frames)
-			frameBuffer.RemoveSentFramesFromBuffer()
+			frameBuffer.RemoveSentFramesFromBuffer(seconds)
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
-			time.Sleep(SecondsToBroadcast * time.Second) // Sleep before allowing the next broadcast, so clients consume what we just sent
-
-			triggerFrameBufferChange <- true // triggering Frame buffer monitor to so that we can rebroadcast
+			time.Sleep(secondsToBroadcast * time.Second) // Sleep before allowing the next broadcast, so clients consume what we just sent
 		}
 	}
 }
 
 func taskDispatcher(ctx context.Context) {
+	var isFirstBroadcast = true
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Task dispatcher shutting down...")
 			return
-		case <-triggerTaskDispatcher:
-
-			if len(clientPool.clients) == 0 {
-				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
+		default:
+			batchesToFetch := secondsToBroadcast
+			if isFirstBroadcast {
+				batchesToFetch = firstSecondsToBroadcast
 			}
+
+			frameBuffer.WaitForRoom(batchesToFetch) // Park if the buffer is full or if there's no connected clients to work
+
 			log.Println("Task dispatcher triggered")
 
 			var currentFrame = uint32(frameBuffer.GetNextFrameNumber())
 
-			batchesToFetch := SecondsToBroadcast
-			if isFirstBroadcast {
-				batchesToFetch = FirstSecondsToBroadcast
-			}
 			var wg sync.WaitGroup
 			for range batchesToFetch {
 				// Select a random client to do the work needed for the current batch
@@ -87,7 +89,11 @@ func taskDispatcher(ctx context.Context) {
 			}
 			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
 
-			triggerFrameBufferChange <- true // triggering Frame buffer monitor to so that we can dispatch more tasks
+			if isFirstBroadcast {
+				isFirstBroadcast = false
+			}
+
+			frameBuffer.AdvanceHead(batchesToFetch)
 		}
 	}
 }
