@@ -5,9 +5,13 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
+
+// clientIDCounter hands out monotonically increasing, never-reused client IDs.
+var clientIDCounter atomic.Uint32
 
 type Client struct {
 	id             uint32
@@ -18,7 +22,7 @@ type Client struct {
 
 func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
-		id:             uint32(clientPool.GetClientCount()),
+		id:             clientIDCounter.Add(1),
 		conn:           ws,
 		numRenderTasks: 0,
 	}
