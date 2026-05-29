@@ -42,6 +42,9 @@ func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, client
 	log.Println("Assigning render task to client", newClient.id, "instead of client", clientID)
 	fbMeta := fbMap.frameBatches[clientID][renderTaskID]
 	newRenderTaskID := newClient.GenerateNewRenderTaskID()
+	if _, ok := fbMap.frameBatches[newClient.id]; !ok {
+		fbMap.frameBatches[newClient.id] = make(map[uint32]FrameBatchMetadata)
+	}
 	fbMap.frameBatches[newClient.id][newRenderTaskID] = fbMeta
 	delete(fbMap.frameBatches[clientID], renderTaskID)
 	return newRenderTaskID
