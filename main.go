@@ -12,7 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{}
+// TODO: look into implementing our own compression layer on both ends
+var upgrader = websocket.Upgrader{EnableCompression: true}
 
 var clientPool = NewClientPool()
 
