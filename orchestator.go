@@ -22,7 +22,6 @@ const (
 	firstSecondsToBroadcast = 6                           // For the very first broadcast, send 6 seconds worth of frames. Given secondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
 	secondsToBroadcast      = 4                           // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 	taskTimeout             = 2 * time.Second             // how long to wait for a client to return a batch before re-dispatching it
-
 )
 
 func frameBroadcaster(ctx context.Context) {
@@ -55,7 +54,7 @@ func frameBroadcaster(ctx context.Context) {
 }
 
 func taskDispatcher(ctx context.Context) {
-	var isFirstBroadcast = true
+	isFirstRound := true // the first round prefetches more, see batchesToFetch below
 
 	for {
 		select {
@@ -64,7 +63,7 @@ func taskDispatcher(ctx context.Context) {
 			return
 		default:
 			batchesToFetch := secondsToBroadcast
-			if isFirstBroadcast {
+			if isFirstRound {
 				batchesToFetch = firstSecondsToBroadcast
 			}
 
@@ -88,11 +87,8 @@ func taskDispatcher(ctx context.Context) {
 			}
 			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
 
-			if isFirstBroadcast {
-				isFirstBroadcast = false
-			}
-
 			frameBuffer.AdvanceHead(batchesToFetch)
+			isFirstRound = false
 		}
 	}
 }
