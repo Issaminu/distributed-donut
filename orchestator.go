@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -37,12 +36,10 @@ func frameBroadcaster(ctx context.Context) {
 				seconds = firstSecondsToBroadcast
 			}
 
-			frameBuffer.WaitUntilBufferSizeEnoughForBroadcast(seconds) // Park if the buffer is dry
+			frameBuffer.WaitUntilBufferSizeEnoughForBroadcast(seconds)
 
 			log.Println("Gathered enough frames, triggering a broadcast...")
-			if len(clientPool.clients) == 0 {
-				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
-			}
+			clientPool.WaitForAtLeastOne() // No point broadcasting into the void
 
 			frames := frameBuffer.GetFramesToBroadcast(seconds)
 			sendFramesToAllClients(frames)
@@ -69,7 +66,7 @@ func taskDispatcher(ctx context.Context) {
 				batchesToFetch = firstSecondsToBroadcast
 			}
 
-			frameBuffer.WaitForRoom(batchesToFetch) // Park if the buffer is full or if there's no connected clients to work
+			frameBuffer.WaitForRoom(batchesToFetch)
 
 			log.Println("Task dispatcher triggered")
 
@@ -100,7 +97,7 @@ func taskDispatcher(ctx context.Context) {
 
 func dispatchRenderTask(startFrame uint32, endFrame uint32, attempt int, previousRenderTaskID uint32, previousClient *Client) { // For the first attempt, attempt is 1, previousRenderTaskID is 0 and previousClient is nil
 	renderTaskID := previousRenderTaskID
-	newClient := _TEMP_getRandomItemFromMap(clientPool.clients)
+	newClient := clientPool.PickNewClient()
 
 	if attempt == 1 { // First attempt
 		renderTaskID = newClient.GenerateNewRenderTaskID()
@@ -120,18 +117,4 @@ func dispatchRenderTask(startFrame uint32, endFrame uint32, attempt int, previou
 	if !frameBatchMap.isRenderTaskCompleted(newClient.id, renderTaskID) {
 		dispatchRenderTask(startFrame, endFrame, attempt+1, renderTaskID, newClient)
 	}
-}
-
-func _TEMP_getRandomItemFromMap(m map[*Client]bool) *Client { // This will get replaced by an dispatching algorithm
-	// Convert map keys to a slice
-	keys := make([]*Client, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-
-	// Select a random key
-	randomKey := keys[rand.Intn(len(keys))]
-
-	// Return the random key and the corresponding value
-	return randomKey
 }

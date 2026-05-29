@@ -57,7 +57,7 @@ func sendFramesToAllClients(frames []byte) {
 	encodedFrames := make([]byte, len(frames)+1) // +1 to include the message type byte
 	encodedFrames[0] = MessageTypeFrameBroadcast
 	copy(encodedFrames[1:], frames)
-	for client := range clientPool.clients {
+	for _, client := range clientPool.Snapshot() {
 		client.sendFrames(encodedFrames)
 	}
 }

@@ -191,6 +191,7 @@ func (fb *FrameBuffer) timeToSleep(frameBatchesRemainingToFullBuffer uint64) tim
 	return time.Duration(seconds * float64(time.Second))
 }
 
+// Park if the buffer doesn't have sufficient enough frames to broadcast
 func (fb *FrameBuffer) WaitUntilBufferSizeEnoughForBroadcast(seconds int) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
@@ -209,7 +210,7 @@ func (fb *FrameBuffer) AdvanceHead(batchesToFetch int) {
 	fb.cond.Broadcast()
 }
 
-// TODO: Add sync.Cond for len(clientPool.clients) == 0, we should await that to become > 0 as well.
+// Park if the buffer is full or if there's no connected clients to work
 func (fb *FrameBuffer) WaitForRoom(batchesToFetch int) {
 	fb.mu.Lock()
 
@@ -219,12 +220,9 @@ func (fb *FrameBuffer) WaitForRoom(batchesToFetch int) {
 	frameBatchesRemaining := fb.frameBatchesRemainingToFullBuffer()
 	fb.mu.Unlock()
 
+	clientPool.WaitForAtLeastOne()
+
 	sleepTime := fb.timeToSleep(frameBatchesRemaining)
-
-	if len(clientPool.clients) == 0 {
-		<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
-	}
-
 	log.Printf("Triggering task dispatcher in %0.2f seconds", sleepTime.Seconds())
 	time.Sleep(sleepTime)
 }
