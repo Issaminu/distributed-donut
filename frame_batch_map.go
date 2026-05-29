@@ -56,6 +56,15 @@ func (fbMap *FrameBatchMap) isRenderTaskCompleted(clientID uint32, renderTaskID 
 	return fbMap.frameBatches[clientID][renderTaskID].completed
 }
 
+func (fbMap *FrameBatchMap) DeleteRenderTask(clientID uint32, renderTaskID uint32) {
+	fbMap.mutex.Lock()
+	defer fbMap.mutex.Unlock()
+	delete(fbMap.frameBatches[clientID], renderTaskID)
+	if len(fbMap.frameBatches[clientID]) == 0 {
+		delete(fbMap.frameBatches, clientID)
+	}
+}
+
 func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *RenderResult) error {
 	fbMap.mutex.Lock()
 	defer fbMap.mutex.Unlock()

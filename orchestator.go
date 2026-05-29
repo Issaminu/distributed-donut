@@ -114,7 +114,10 @@ func dispatchRenderTask(startFrame uint32, endFrame uint32, attempt int, previou
 	}
 	newClient.RequestWork(renderTaskID, startFrame, endFrame)
 	time.Sleep(time.Second * 2)
-	if !frameBatchMap.isRenderTaskCompleted(newClient.id, renderTaskID) {
-		dispatchRenderTask(startFrame, endFrame, attempt+1, renderTaskID, newClient)
+	if frameBatchMap.isRenderTaskCompleted(newClient.id, renderTaskID) {
+		frameBatchMap.DeleteRenderTask(newClient.id, renderTaskID)
+		return
 	}
+	// if it wasn't successful, redispatch again
+	dispatchRenderTask(startFrame, endFrame, attempt+1, renderTaskID, newClient)
 }
