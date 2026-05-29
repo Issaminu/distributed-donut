@@ -45,6 +45,8 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 	return nil
 }
 
+// GetFramesToBroadcast returns the next `seconds` worth of frames starting at the tail.
+// It always returns a fresh copy, so the caller can safely hold the result after the lock is released and after the tail advances.
 func (fb *FrameBuffer) GetFramesToBroadcast(seconds int) []byte {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
@@ -54,20 +56,16 @@ func (fb *FrameBuffer) GetFramesToBroadcast(seconds int) []byte {
 	}
 
 	deltaToBroadcast := uint64((seconds * FramesPerBatch) * FrameSize)
-
-	// deltaHead is the index in the frame buffer of the element after the last byte to broadcast in this turn
-	// we're broadcasting from fb.tail .. fb.tail+deltaToBroadcast, `deltaHead` is the element right after that.
-	deltaHead := (fb.tail%BufferSize + deltaToBroadcast) % BufferSize
-
-	if deltaHead > fb.tail%BufferSize {
-		return fb.buffer[fb.tail%BufferSize : deltaHead]
-	}
-
 	result := make([]byte, deltaToBroadcast)
+
+	// Copy from the tail, wrapping around the end of the ring if necessary.
 	tailIdx := fb.tail % BufferSize
-	headIdx := deltaHead % BufferSize
-	copy(result, fb.buffer[tailIdx:])
-	copy(result[BufferSize-tailIdx:], fb.buffer[:headIdx])
+	// copy() copies min(len(dst), len(src)) bytes, so even though buffer[tailIdx:] runs to the end of the ring, this writes only deltaToBroadcast bytes (when they fit before the end), n tells us how many actually have landed.
+	n := copy(result, fb.buffer[tailIdx:])
+	if uint64(n) < deltaToBroadcast {
+		// Didn't fit before the ring's end: copy the remainder from the start.
+		copy(result[n:], fb.buffer[:deltaToBroadcast-uint64(n)])
+	}
 
 	return result
 }
