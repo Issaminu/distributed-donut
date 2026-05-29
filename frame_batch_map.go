@@ -50,12 +50,6 @@ func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, client
 	return newRenderTaskID
 }
 
-func (fbMap *FrameBatchMap) isRenderTaskCompleted(clientID uint32, renderTaskID uint32) bool {
-	fbMap.mutex.Lock()
-	defer fbMap.mutex.Unlock()
-	return fbMap.frameBatches[clientID][renderTaskID].completed
-}
-
 func (fbMap *FrameBatchMap) DeleteRenderTask(clientID uint32, renderTaskID uint32) {
 	fbMap.mutex.Lock()
 	defer fbMap.mutex.Unlock()
@@ -74,10 +68,14 @@ func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *Rend
 	}
 
 	batchMetadata := fbMap.frameBatches[clientID][renderResult.id]
+	if batchMetadata.completed {
+		return nil // duplicate result for an already-completed task; ignore so we don't double-close done
+	}
 	if err := frameBuffer.AddFramesToBuffer(batchMetadata.renderTask.startFrame, batchMetadata.renderTask.endFrame, &renderResult.frames); err != nil {
 		return err
 	}
 	batchMetadata.completed = true
 	fbMap.frameBatches[clientID][renderResult.id] = batchMetadata
+	close(batchMetadata.done) // wake the dispatcher goroutine waiting on this task
 	return nil
 }

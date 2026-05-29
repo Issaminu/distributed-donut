@@ -17,7 +17,8 @@ const BatchSize = FrameSize * FramesPerBatch // bytes, FrameBatch also has some 
 
 type FrameBatchMetadata struct {
 	renderTask RenderTask
-	completed  bool
+	completed  bool          // synchronous "is it done" state, read/written under the FrameBatchMap mutex
+	done       chan struct{} // closed once when the batch is stored, to wake the dispatcher goroutine waiting on it
 }
 
 func NewFrameBatchMetadata(renderTaskID uint32, startFrame uint32, endFrame uint32) *FrameBatchMetadata {
@@ -25,5 +26,6 @@ func NewFrameBatchMetadata(renderTaskID uint32, startFrame uint32, endFrame uint
 	return &FrameBatchMetadata{
 		renderTask: *renderTask,
 		completed:  false,
+		done:       make(chan struct{}),
 	}
 }

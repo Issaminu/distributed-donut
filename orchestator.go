@@ -21,6 +21,8 @@ const (
 	BufferSize              = MaxFrames * FrameSize       // Buffer size in bytes
 	firstSecondsToBroadcast = 6                           // For the very first broadcast, send 6 seconds worth of frames. Given secondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
 	secondsToBroadcast      = 4                           // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
+	taskTimeout             = 2 * time.Second             // how long to wait for a client to return a batch before re-dispatching it
+
 )
 
 func frameBroadcaster(ctx context.Context) {
@@ -81,7 +83,7 @@ func taskDispatcher(ctx context.Context) {
 				wg.Add(1)
 				go func(start, end uint32) {
 					defer wg.Done()
-					dispatchRenderTask(start, end, 1, 0, nil)
+					dispatchRenderTask(start, end)
 				}(startFrame, endFrame)
 			}
 			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
@@ -95,29 +97,35 @@ func taskDispatcher(ctx context.Context) {
 	}
 }
 
-func dispatchRenderTask(startFrame uint32, endFrame uint32, attempt int, previousRenderTaskID uint32, previousClient *Client) { // For the first attempt, attempt is 1, previousRenderTaskID is 0 and previousClient is nil
-	renderTaskID := previousRenderTaskID
-	newClient := clientPool.PickNewClient()
+// dispatchRenderTask assigns one batch to a client and blocks until that batch has been rendered and stored.
+// It returns as soon as the client responds (via the task's done channel).
+// If no response arrives within taskTimeout it re-dispatches to a different client when one is available.
+// `dispatchRenderTask()` never gives up since abandoning a batch would let AdvanceHead advance over an unwritten slot.
+func dispatchRenderTask(startFrame uint32, endFrame uint32) {
+	client := clientPool.PickNewClient()
+	renderTaskID := client.GenerateNewRenderTaskID()
+	frameBatch := NewFrameBatchMetadata(renderTaskID, startFrame, endFrame)
+	frameBatchMap.AddFrameBatch(client.id, frameBatch)
+	done := frameBatch.done // same channel travels with the task across executor switches
 
-	if attempt == 1 { // First attempt
-		renderTaskID = newClient.GenerateNewRenderTaskID()
-		log.Println("Sending RenderTask for frames", startFrame, "to", endFrame, "to client", newClient.id)
-		frameBatch := NewFrameBatchMetadata(renderTaskID, startFrame, endFrame)
-		frameBatchMap.AddFrameBatch(newClient.id, frameBatch)
-	} else { // Subsequent attempts
-		if newClient.id == previousClient.id {
-			log.Println("Attempt #", attempt-1, "failed, retrying with the same render task executor")
-		} else {
-			log.Println("Attempt #", attempt-1, "failed, switching render task executor to", newClient.id)
-			renderTaskID = frameBatchMap.SwitchRenderTaskExecutor(previousRenderTaskID, previousClient.id, newClient) // Switch the render task executor to the new client, and receive the new RenderTask ID
+	log.Println("Sending RenderTask for frames", startFrame, "to", endFrame, "to client", client.id)
+	client.RequestWork(renderTaskID, startFrame, endFrame)
+
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-done:
+			frameBatchMap.DeleteRenderTask(client.id, renderTaskID)
+			return
+		case <-time.After(taskTimeout): // timeout exceeded, picking new client
+			next := clientPool.PickNewClient()
+			if next.id == client.id {
+				log.Println("Attempt #", attempt, "timed out, retrying with the same client", client.id)
+			} else {
+				log.Println("Attempt #", attempt, "timed out, switching executor to client", next.id)
+				renderTaskID = frameBatchMap.SwitchRenderTaskExecutor(renderTaskID, client.id, next)
+				client = next
+			}
+			client.RequestWork(renderTaskID, startFrame, endFrame)
 		}
 	}
-	newClient.RequestWork(renderTaskID, startFrame, endFrame)
-	time.Sleep(time.Second * 2)
-	if frameBatchMap.isRenderTaskCompleted(newClient.id, renderTaskID) {
-		frameBatchMap.DeleteRenderTask(newClient.id, renderTaskID)
-		return
-	}
-	// if it wasn't successful, redispatch again
-	dispatchRenderTask(startFrame, endFrame, attempt+1, renderTaskID, newClient)
 }
