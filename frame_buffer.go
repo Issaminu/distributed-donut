@@ -38,15 +38,7 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 	}
 
 	batchStartIndex := (startFrame * FrameSize) % BufferSize
-	batchEndIndex := (endFrame*FrameSize + FrameSize) % BufferSize // `+FrameSize` because `endFrame*FrameSize` defines where the last frame starts. But what we actually meed os where it ends. i.e. the position of the last byte of the frameBatch
-
-	if batchEndIndex-batchStartIndex != BatchSize {
-		return errors.New("received incorrect batch size")
-	}
-
-	if uint64(batchStartIndex) < fb.tail {
-		return errors.New("appending frames that should have been already sent out")
-	}
+	batchEndIndex := batchStartIndex + BatchSize
 
 	copy(fb.buffer[batchStartIndex:batchEndIndex], data[:])
 
