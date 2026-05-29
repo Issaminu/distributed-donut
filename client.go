@@ -76,7 +76,7 @@ func (c *Client) sendFrames(data []byte) {
 }
 
 func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame uint32) {
-	requestedWork := make([]byte, 13) // 8 bytes for frames + 1 byte for message type + 4 bytes for RenderTask ID
+	requestedWork := make([]byte, 13) //  1 byte for message type + 4 bytes for RenderTask ID + 4 bytes for startFrame + 4 bytes for endFrame
 	requestedWork[0] = MessageTypeRenderTask
 	binary.BigEndian.PutUint32(requestedWork[1:5], renderTaskID)
 	binary.BigEndian.PutUint32(requestedWork[5:9], startFrame)
