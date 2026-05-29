@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -13,19 +14,71 @@ import (
 // clientIDCounter hands out monotonically increasing, never-reused client IDs.
 var clientIDCounter atomic.Uint32
 
+const (
+	writeTimeout        = 30 * time.Second // a write that can't complete in this long means a dead client
+	clientSendQueueSize = 15               // outbound messages we'll buffer before deciding a client is too slow
+)
+
 type Client struct {
 	id             uint32
 	conn           *websocket.Conn
 	mutex          sync.Mutex
 	numRenderTasks uint32
+	send           chan []byte   // outbound messages, drained by the writer goroutine
+	quit           chan struct{} // closed to stop the writer goroutine
+	closeOnce      sync.Once
 }
 
 func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
-		id:             clientIDCounter.Add(1),
-		conn:           ws,
-		numRenderTasks: 0,
+		id:   clientIDCounter.Add(1),
+		conn: ws,
+		send: make(chan []byte, clientSendQueueSize),
+		quit: make(chan struct{}),
 	}
+}
+
+// Goroutine that handles sending messages to a client.
+// Each connected client has it's own independant writePump().
+func (c *Client) writePump() {
+	for {
+		select {
+		case <-c.quit:
+			return
+		case msg := <-c.send:
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				log.Println(err)
+				c.close()
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+				log.Println(err)
+				c.close() // dead connection; tear down so the read loop unblocks too
+				return
+			}
+		}
+	}
+}
+
+// enqueue hands a message to the client's writer without blocking. A full queue
+// means the client can't keep up, so we drop the message rather than stall
+// everyone else.
+func (c *Client) enqueue(msg []byte) {
+	select {
+	case c.send <- msg:
+	default:
+		log.Printf("Client %d send queue full, dropping message", c.id)
+	}
+}
+
+// close tears the client down exactly once: stops the writer, closes the
+// connection (which unblocks the reader), and removes it from the pool.
+func (c *Client) close() {
+	c.closeOnce.Do(func() {
+		close(c.quit)
+		c.conn.Close()
+		clientPool.RemoveClient(c)
+	})
 }
 
 const (
@@ -62,16 +115,7 @@ func sendFramesToAllClients(frames []byte) {
 	encodedFrames[0] = MessageTypeFrameBroadcast
 	copy(encodedFrames[1:], frames)
 	for _, client := range clientPool.Snapshot() {
-		client.sendFrames(encodedFrames)
-	}
-}
-
-func (c *Client) sendFrames(data []byte) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	err := c.conn.WriteMessage(websocket.BinaryMessage, data[:])
-	if err != nil {
-		log.Println(err)
+		client.enqueue(encodedFrames)
 	}
 }
 
@@ -81,10 +125,5 @@ func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame ui
 	binary.BigEndian.PutUint32(requestedWork[1:5], renderTaskID)
 	binary.BigEndian.PutUint32(requestedWork[5:9], startFrame)
 	binary.BigEndian.PutUint32(requestedWork[9:13], endFrame)
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	err := c.conn.WriteMessage(websocket.BinaryMessage, requestedWork[:])
-	if err != nil {
-		log.Println(err)
-	}
+	c.enqueue(requestedWork)
 }

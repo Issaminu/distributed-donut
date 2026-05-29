@@ -43,35 +43,27 @@ func handleNewConnection(ctx context.Context, w http.ResponseWriter, r *http.Req
 		log.Println(err)
 		return
 	}
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}(conn)
 	log.Println("Client connected")
 	client := NewClient(conn)
 	clientPool.AddClient(client)
+	defer client.close()
+	go client.writePump()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Connection handler shutting down...")
-			clientPool.RemoveClient(client)
 			return
 		default:
 			_, incomingMessage, err := conn.ReadMessage()
 			if err != nil {
 				log.Println(err)
-				clientPool.RemoveClient(client)
 				return
 			}
-			err = client.HandleReceivedMessage(incomingMessage)
-			if err != nil {
+			if err := client.HandleReceivedMessage(incomingMessage); err != nil {
 				log.Println(err)
 				return
 			}
-
 		}
 	}
 }
