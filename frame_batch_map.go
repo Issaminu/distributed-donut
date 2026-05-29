@@ -62,7 +62,10 @@ func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *Rend
 	}
 
 	batchMetadata := fbMap.frameBatches[clientID][renderResult.id]
+	if err := frameBuffer.AddFramesToBuffer(batchMetadata.renderTask.startFrame, batchMetadata.renderTask.endFrame, &renderResult.frames); err != nil {
+		return err
+	}
 	batchMetadata.completed = true
 	fbMap.frameBatches[clientID][renderResult.id] = batchMetadata
-	return frameBuffer.AddFramesToBuffer(batchMetadata.renderTask.startFrame, batchMetadata.renderTask.endFrame, &renderResult.frames)
+	return nil
 }
