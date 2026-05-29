@@ -45,26 +45,6 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 	return nil
 }
 
-func (fb *FrameBuffer) GetAllFramesInBuffer() []byte {
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
-
-	length := fb.GetLengthInFrames()
-	if length == 0 {
-		return nil
-	}
-	if fb.head >= fb.tail {
-		return fb.buffer[fb.tail%BufferSize : fb.head%BufferSize]
-	}
-	// When head < tail the valid data is from tail..end and from 0..head
-	result := make([]byte, fb.GetLengthInBytes())
-	tailIdx := fb.tail % BufferSize
-	headIdx := fb.head % BufferSize
-	copy(result, fb.buffer[tailIdx:])
-	copy(result[BufferSize-tailIdx:], fb.buffer[:headIdx])
-	return result
-}
-
 func (fb *FrameBuffer) GetFramesToBroadcast(seconds int) []byte {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
@@ -114,21 +94,6 @@ func (fb *FrameBuffer) GetLengthInFrames() uint64 { // Frame Buffer length in nu
 		return (fb.head - fb.tail) / FrameSize
 	}
 	return (BufferSize - fb.tail + fb.head) / FrameSize
-}
-
-func (fb *FrameBuffer) GetLengthInBytes() uint64 { // Frame Buffer length in bytes
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
-
-	length := fb.GetLengthInFrames()
-	if length == 0 {
-		return 0
-	}
-	if fb.tail >= fb.head {
-		return BufferSize - (fb.tail%BufferSize - fb.head%BufferSize)
-	}
-
-	return fb.head%BufferSize - fb.tail%BufferSize
 }
 
 func (fb *FrameBuffer) GetNextFrameNumber() uint64 {
