@@ -1,12 +1,8 @@
-window.onload = function () {
+window.onload = () => {
   const FramesPerBatch = 60;
   const BufferSize = 20 * FramesPerBatch; // 20 seconds worth of frames
   const DonutStringLength = 1760;
   const IntervalBetweenFrames = 1000 / FramesPerBatch;
-
-  const FirstSecondsToBroadcast = 6;
-  const SecondsToBroadcast = 4;
-  const ClientBufferWindow = FirstSecondsToBroadcast - SecondsToBroadcast;
 
   class CircularBuffer {
     constructor() {
@@ -77,7 +73,7 @@ window.onload = function () {
   // Decoding frames
   function decodeFrames(encodedFrames) {
     let currentFrame = "";
-    let decodedFrames = [];
+    const decodedFrames = [];
 
     // encodedFrames.slice(3).forEach((byte) => { // Skip the first three bytes, the first for messageType and the other two are for renderTaskID, only do this when decoding the encoded frames on the same machine (i.e. when debugging)
     encodedFrames.forEach((byte) => {
@@ -117,11 +113,11 @@ window.onload = function () {
     ws = connectToServer();
     ws.binaryType = "arraybuffer";
 
-    ws.onopen = function () {
+    ws.onopen = () => {
       console.log("Connection established");
     };
 
-    ws.onmessage = function (e) {
+    ws.onmessage = (e) => {
       const data = e.data;
       const dv = new DataView(data);
       const messageType = dv.getUint8(0);
@@ -154,12 +150,12 @@ window.onload = function () {
       }
     };
 
-    ws.onclose = function () {
+    ws.onclose = () => {
       console.log("Connection closed. Attempting to reconnect...");
       setTimeout(setupWebSocket, 3000); // Try to reconnect after 1 second
     };
 
-    ws.onerror = function (error) {
+    ws.onerror = (error) => {
       console.error("WebSocket error:", error);
       ws.close(); // This will trigger onclose, which will attempt to reconnect
     };
@@ -168,7 +164,7 @@ window.onload = function () {
   setupWebSocket(); // Initial connection attempt
 
   const worker = new Worker("donut-worker.js");
-  worker.onmessage = function (e) {
+  worker.onmessage = (e) => {
     const encodedData = e.data;
     console.log("Render Task done, sending Render Result to server");
     ws.send(encodedData);
