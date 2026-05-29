@@ -16,17 +16,18 @@ var logChan = make(chan []byte)
 func frameOrchestrator(ctx context.Context) {
 	go frameBroadcaster(ctx)
 	go taskDispatcher(ctx)
-	go consoleDrawer(ctx)
+	// go consoleDrawer(ctx)
+	go frameBuffer.frameBufferMonitor(ctx)
 	triggerTaskDispatcher <- true // Trigger the taskDispatcher for the first time
 }
 
 const (
-	FramesPerBatch          = 60      // Frames per batch/second
-	MaxBatches              = 30 * 60 // 1800 batches/seconds ~= 30 Minutes (Could go longer but it would consume much more memory for no benefit)
-	MaxFrames               = MaxBatches * FramesPerBatch
-	BufferSize              = MaxFrames * FrameSize // Buffer size in bytes
-	FirstSecondsToBroadcast = 6                     // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
-	SecondsToBroadcast      = 4                     // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
+	FramesPerBatch          = 60                          // Frames per batch/second
+	MaxBatches              = 30 * 60                     // 1800 batches/seconds ~= 30 Minutes (Could go longer but it would consume much more memory for no benefit)
+	MaxFrames               = MaxBatches * FramesPerBatch // Maximum amount of frames we can hold in the buffer
+	BufferSize              = MaxFrames * FrameSize       // Buffer size in bytes
+	FirstSecondsToBroadcast = 6                           // For the very first broadcast, send 6 seconds worth of frames. Given SecondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
+	SecondsToBroadcast      = 4                           // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
 )
 
 func frameBroadcaster(ctx context.Context) {
@@ -36,18 +37,19 @@ func frameBroadcaster(ctx context.Context) {
 			log.Println("Frame broadcaster shutting down...")
 			return
 		case <-triggerFrameBroadcaster:
+			log.Println("Gathered enough frames, triggering a broadcast...")
 			if len(clientPool.clients) == 0 {
 				<-clientPoolIsNotEmpty // Wait until the pool is not empty, meaning we have clients to dispatch rendering tasks to
 			}
-			frames := frameBuffer.GetFrames()
-			// logChan <- frames
+			frames := frameBuffer.GetFramesToBroadcast()
 			sendFramesToAllClients(frames)
 			frameBuffer.RemoveSentFramesFromBuffer()
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
-			triggerTaskDispatcher <- true                // Kick off the next round now so dispatch runs in parallel with the sleep below
 			time.Sleep(SecondsToBroadcast * time.Second) // Sleep before allowing the next broadcast, so clients consume what we just sent
+
+			triggerFrameBufferChange <- true // triggering Frame buffer monitor to so that we can rebroadcast
 		}
 	}
 }
@@ -84,8 +86,8 @@ func taskDispatcher(ctx context.Context) {
 				}(startFrame, endFrame)
 			}
 			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
-			log.Println("Gathered enough frames, triggering a broadcast...")
-			triggerFrameBroadcaster <- true
+
+			triggerFrameBufferChange <- true // triggering Frame buffer monitor to so that we can dispatch more tasks
 		}
 	}
 }
