@@ -74,6 +74,8 @@ func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *Rend
 	if batchMetadata.completed {
 		return nil // duplicate result for an already-completed task; ignore so we don't double-close done
 	}
+
+	// TODO: validate render task results. Clients are untrusted, yet we commit their raw frame bytes straight into the shared buffer that everyone plays back. A buggy or malicious client can corrupt the animation for all viewers.
 	if err := frameBuffer.AddFramesToBuffer(batchMetadata.renderTask.startFrame, batchMetadata.renderTask.endFrame, &renderResult.frames); err != nil {
 		return err
 	}
