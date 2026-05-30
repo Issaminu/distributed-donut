@@ -5,7 +5,6 @@ package buffer
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"sync"
 	"time"
@@ -39,7 +38,6 @@ func NewFrameBuffer() *FrameBuffer {
 func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[protocol.BatchSize]byte) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
-	log.Println("====== Adding frames from", startFrame, "to", endFrame, "======")
 
 	if startFrame > endFrame {
 		return errors.New("start frame is greater than end frame")

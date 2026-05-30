@@ -1,10 +1,11 @@
 # Technical deep dive
 
 > The deep dive. For a one-screen overview and how to run the project, see
-> [`README.md`](README.md). This document explains how the system is built and,
-> more importantly, **why it is built this way** — the data flow, each
-> subsystem, the concurrency model, the failure handling, and the design
-> decisions behind them.
+> [`README.md`](README.md); for how performance is measured and how to read the
+> numbers, see [`BENCHMARKS.md`](BENCHMARKS.md). This document explains how the
+> system is built and, more importantly, **why it is built this way** — the data
+> flow, each subsystem, the concurrency model, the failure handling, and the
+> design decisions behind them.
 
 ## The central idea
 
