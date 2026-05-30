@@ -121,10 +121,43 @@ func TestRenderTaskRoundTrip(t *testing.T) {
 	if msg[0] != protocol.MessageTypeRenderTask {
 		t.Fatalf("message type = %#x", msg[0])
 	}
-	gotID := binary.BigEndian.Uint32(msg[1:5])
-	gotStart := binary.BigEndian.Uint32(msg[5:9])
-	gotEnd := binary.BigEndian.Uint32(msg[9:13])
+	gotID, gotStart, gotEnd, err := protocol.DecodeRenderTask(msg[1:])
+	if err != nil {
+		t.Fatalf("DecodeRenderTask: %v", err)
+	}
 	if gotID != taskID || gotStart != start || gotEnd != end {
 		t.Errorf("round trip = (%d, %d, %d), want (%d, %d, %d)", gotID, gotStart, gotEnd, taskID, start, end)
+	}
+}
+
+func TestDecodeRenderTaskRejectsShortInput(t *testing.T) {
+	if _, _, _, err := protocol.DecodeRenderTask([]byte{0, 1, 2, 3}); err == nil {
+		t.Fatal("expected error for short render task body")
+	}
+}
+
+// A result encoded by a worker should be parseable by the server via
+// NewRenderResult, recovering the same task ID and frame bytes.
+func TestRenderResultRoundTrip(t *testing.T) {
+	const taskID = uint32(7777)
+	frames := make([]byte, protocol.BatchSize)
+	for i := range frames {
+		frames[i] = byte(i % 256)
+	}
+
+	msg := protocol.EncodeRenderResult(taskID, frames)
+	if msg[0] != protocol.MessageTypeRenderResult {
+		t.Fatalf("message type = %#x", msg[0])
+	}
+
+	res, err := protocol.NewRenderResult(msg[1:])
+	if err != nil {
+		t.Fatalf("NewRenderResult: %v", err)
+	}
+	if res.ID != taskID {
+		t.Errorf("ID = %d, want %d", res.ID, taskID)
+	}
+	if !bytes.Equal(res.Frames[:], frames) {
+		t.Error("frame bytes did not survive the round trip")
 	}
 }

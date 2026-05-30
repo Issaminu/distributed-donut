@@ -3,7 +3,10 @@
 // encode/decode helpers for each message.
 package protocol
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 // === Calculation for the frame size ===
 // The frame is represented as a 2D grid of characters.
@@ -48,4 +51,28 @@ func EncodeFrameBroadcast(frames []byte) []byte {
 	msg[0] = MessageTypeFrameBroadcast
 	copy(msg[1:], frames)
 	return msg
+}
+
+// EncodeRenderResult builds a RenderResult message: 1 byte message type +
+// 4 bytes render task ID + the rendered frame bytes. It is the symmetric
+// counterpart to NewRenderResult, used by a worker returning completed work.
+func EncodeRenderResult(renderTaskID uint32, frames []byte) []byte {
+	msg := make([]byte, 5+len(frames))
+	msg[0] = MessageTypeRenderResult
+	binary.BigEndian.PutUint32(msg[1:5], renderTaskID)
+	copy(msg[5:], frames)
+	return msg
+}
+
+// DecodeRenderTask parses the body of a RenderTask message (the 12 bytes after
+// the message-type tag): render task ID, start frame, end frame. It is the
+// symmetric counterpart to EncodeRenderTask, used by a worker receiving work.
+func DecodeRenderTask(data []byte) (id uint32, startFrame uint32, endFrame uint32, err error) {
+	if len(data) < 12 {
+		return 0, 0, 0, errors.New("render task message too short")
+	}
+	id = binary.BigEndian.Uint32(data[0:4])
+	startFrame = binary.BigEndian.Uint32(data[4:8])
+	endFrame = binary.BigEndian.Uint32(data[8:12])
+	return id, startFrame, endFrame, nil
 }
