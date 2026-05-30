@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -42,14 +43,18 @@ func New(pool *client.ClientPool, onResult client.ResultHandler, assets fs.FS) *
 	}
 }
 
-// ListenAndServe starts the HTTP server on addr and blocks until it stops. It shuts down gracefully when ctx is cancelled.
-func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+// ListenAndServe starts the HTTP server on addr and blocks until it stops. It
+// shuts down gracefully when ctx is cancelled, waiting up to shutdownTimeout for
+// in-flight requests to drain before giving up.
+func (s *Server) ListenAndServe(ctx context.Context, addr string, shutdownTimeout time.Duration) error {
 	server := &http.Server{Addr: addr, Handler: s.Handler(ctx)}
 
 	go func() {
 		<-ctx.Done()
 		log.Println("Shutting down WebSocket server...")
-		if err := server.Shutdown(context.Background()); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			log.Println("WebSocket server shutdown error:", err)
 		}
 	}()
