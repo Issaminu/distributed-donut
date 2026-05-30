@@ -17,6 +17,11 @@ var clientIDCounter atomic.Uint32
 const (
 	writeTimeout        = 30 * time.Second // a write that can't complete in this long means a dead client
 	clientSendQueueSize = 15               // outbound messages we'll buffer before deciding a client is too slow
+
+	// maxIncomingMessageBytes bounds the size of a message we'll read from a client. The only thing a client ever sends is a RenderResult:
+	// 1 byte message type + 4 bytes render task ID + BatchSize bytes of frames.
+	// This is done so that a misbehaving client can't stream us unbounded data or a decompression bomb.
+	maxIncomingMessageBytes = 1 + 4 + BatchSize
 )
 
 type Client struct {
@@ -30,6 +35,7 @@ type Client struct {
 }
 
 func NewClient(ws *websocket.Conn) *Client {
+	ws.SetReadLimit(maxIncomingMessageBytes)
 	return &Client{
 		id:   clientIDCounter.Add(1),
 		conn: ws,
