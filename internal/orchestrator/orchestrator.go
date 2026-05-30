@@ -14,24 +14,75 @@ import (
 	"github.com/Issaminu/distributed-donut/internal/protocol"
 )
 
-const (
-	firstSecondsToBroadcast = 6               // For the very first broadcast, send 6 seconds worth of frames. Given secondsToBroadcast being 4, this means we'll always have 2 seconds of additional buffer on the clients.
-	secondsToBroadcast      = 4               // Number of seconds to wait before broadcasting the frames (For all broadcasts except the first). When broadcasting frames, we send 4 seconds worth of frames.
-	taskTimeout             = 2 * time.Second // how long to wait for a client to return a batch before re-dispatching it
-)
+// Config tunes the orchestrator's pacing and fault-tolerance timing. The zero
+// value is not valid; start from DefaultConfig and adjust via Options.
+type Config struct {
+	// FirstSecondsToBroadcast is how many seconds of frames to gather before the
+	// very first broadcast. Given SecondsToBroadcast, the extra seconds become a
+	// playback buffer on the clients.
+	FirstSecondsToBroadcast int
+	// SecondsToBroadcast is how many seconds of frames each subsequent broadcast
+	// (and each dispatch round) covers.
+	SecondsToBroadcast int
+	// BroadcastInterval paces the pipeline: it bounds the dispatcher's pre-fetch
+	// sleep and is the cooldown between broadcasts so clients can consume what
+	// they were just sent.
+	BroadcastInterval time.Duration
+	// TaskTimeout is how long to wait for a client to return a batch before
+	// re-dispatching it to another client.
+	TaskTimeout time.Duration
+}
+
+// DefaultConfig returns the production timing.
+func DefaultConfig() Config {
+	return Config{
+		FirstSecondsToBroadcast: 6,
+		SecondsToBroadcast:      4,
+		BroadcastInterval:       4 * time.Second,
+		TaskTimeout:             2 * time.Second,
+	}
+}
+
+// Option mutates a Config; pass Options to New to override the defaults.
+type Option func(*Config)
+
+// WithTaskTimeout sets how long a batch may be outstanding before reassignment.
+func WithTaskTimeout(d time.Duration) Option {
+	return func(c *Config) { c.TaskTimeout = d }
+}
+
+// WithBroadcastInterval sets the pipeline pacing/cooldown duration.
+func WithBroadcastInterval(d time.Duration) Option {
+	return func(c *Config) { c.BroadcastInterval = d }
+}
+
+// WithBroadcastThresholds sets how many seconds of frames the first and
+// subsequent broadcasts cover.
+func WithBroadcastThresholds(first, subsequent int) Option {
+	return func(c *Config) {
+		c.FirstSecondsToBroadcast = first
+		c.SecondsToBroadcast = subsequent
+	}
+}
 
 // Orchestrator owns the rendering pipeline. Construct it with New, then call Run to start its background loops.
 type Orchestrator struct {
 	buffer   *buffer.FrameBuffer
 	clients  *client.ClientPool
 	batchMap *FrameBatchMap
+	cfg      Config
 }
 
-func New(buf *buffer.FrameBuffer, pool *client.ClientPool) *Orchestrator {
+func New(buf *buffer.FrameBuffer, pool *client.ClientPool, opts ...Option) *Orchestrator {
+	cfg := DefaultConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return &Orchestrator{
 		buffer:   buf,
 		clients:  pool,
 		batchMap: NewFrameBatchMap(buf),
+		cfg:      cfg,
 	}
 }
 
@@ -55,9 +106,9 @@ func (o *Orchestrator) broadcaster(ctx context.Context) {
 			log.Println("Frame broadcaster shutting down...")
 			return
 		default:
-			seconds := secondsToBroadcast
+			seconds := o.cfg.SecondsToBroadcast
 			if isFirstBroadcast {
-				seconds = firstSecondsToBroadcast
+				seconds = o.cfg.FirstSecondsToBroadcast
 			}
 
 			o.buffer.WaitUntilBufferSizeEnoughForBroadcast(seconds)
@@ -71,7 +122,7 @@ func (o *Orchestrator) broadcaster(ctx context.Context) {
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
-			time.Sleep(secondsToBroadcast * time.Second) // Sleep before allowing the next broadcast, so clients consume what we just sent
+			time.Sleep(o.cfg.BroadcastInterval) // Sleep before allowing the next broadcast, so clients consume what we just sent
 		}
 	}
 }
@@ -85,12 +136,12 @@ func (o *Orchestrator) dispatcher(ctx context.Context) {
 			log.Println("Task dispatcher shutting down...")
 			return
 		default:
-			batchesToFetch := secondsToBroadcast
+			batchesToFetch := o.cfg.SecondsToBroadcast
 			if isFirstRound {
-				batchesToFetch = firstSecondsToBroadcast
+				batchesToFetch = o.cfg.FirstSecondsToBroadcast
 			}
 
-			sleep := o.buffer.WaitForRoom(batchesToFetch, secondsToBroadcast*time.Second)
+			sleep := o.buffer.WaitForRoom(batchesToFetch, o.cfg.BroadcastInterval)
 			o.clients.WaitForAtLeastOne() // no point dispatching with no workers connected
 			log.Printf("Triggering task dispatcher in %0.2f seconds", sleep.Seconds())
 			time.Sleep(sleep)
@@ -138,7 +189,7 @@ func (o *Orchestrator) dispatchRenderTask(startFrame uint32, endFrame uint32) {
 		case <-done:
 			o.batchMap.DeleteRenderTask(worker.ID(), renderTaskID)
 			return
-		case <-time.After(taskTimeout): // timeout exceeded, picking new client
+		case <-time.After(o.cfg.TaskTimeout): // timeout exceeded, picking new client
 			next := o.clients.PickNewClient()
 			if next.ID() == worker.ID() {
 				log.Println("Attempt #", attempt, "timed out, retrying with the same client", worker.ID())
