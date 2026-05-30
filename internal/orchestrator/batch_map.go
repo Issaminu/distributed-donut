@@ -43,7 +43,6 @@ func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, client
 	if clientID == newClient.ID() {
 		panic("clientID and newClientID cannot be the same")
 	}
-	log.Println("Assigning render task to client", newClient.ID(), "instead of client", clientID)
 	fbMeta := fbMap.frameBatches[clientID][renderTaskID]
 	newRenderTaskID := newClient.GenerateNewRenderTaskID()
 	if _, ok := fbMap.frameBatches[newClient.ID()]; !ok {

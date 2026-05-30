@@ -112,8 +112,6 @@ func (o *Orchestrator) broadcaster(ctx context.Context) {
 			}
 
 			o.buffer.WaitUntilBufferSizeEnoughForBroadcast(seconds)
-
-			log.Println("Gathered enough frames, triggering a broadcast...")
 			o.clients.WaitForAtLeastOne() // No point broadcasting into the void
 
 			frames := o.buffer.GetFramesToBroadcast(seconds)
@@ -143,10 +141,7 @@ func (o *Orchestrator) dispatcher(ctx context.Context) {
 
 			sleep := o.buffer.WaitForRoom(batchesToFetch, o.cfg.BroadcastInterval)
 			o.clients.WaitForAtLeastOne() // no point dispatching with no workers connected
-			log.Printf("Triggering task dispatcher in %0.2f seconds", sleep.Seconds())
 			time.Sleep(sleep)
-
-			log.Println("Task dispatcher triggered")
 
 			var currentFrame = uint32(o.buffer.GetNextFrameNumber())
 
@@ -181,7 +176,6 @@ func (o *Orchestrator) dispatchRenderTask(startFrame uint32, endFrame uint32) {
 	o.batchMap.AddFrameBatch(worker.ID(), frameBatch)
 	done := frameBatch.done // same channel travels with the task across executor switches
 
-	log.Println("Sending RenderTask for frames", startFrame, "to", endFrame, "to client", worker.ID())
 	worker.RequestWork(renderTaskID, startFrame, endFrame)
 
 	for attempt := 1; ; attempt++ {
