@@ -10,7 +10,7 @@ package main
 // 22 rows
 // Total length = 80 * 22 = 1760 characters
 // Possible values for each character are ".,-~:;=!*#$@ \n".
-// These are 13 possible values. 13 in binary is 1101. So, we can represent each character as a 4-bit binary number.
+// These are 14 possible values. 14 in binary is 1110. So, we can represent each character as a 4-bit binary number.
 // This means that the total length of the frame is 1760 * 4 = 7040 bits = 880 bytes.
 const FrameSize = 880                        // bytes
 const BatchSize = FrameSize * FramesPerBatch // bytes, FrameBatch also has some metadata that is stripped when broadcasting the frames
