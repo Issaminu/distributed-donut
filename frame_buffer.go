@@ -88,10 +88,7 @@ func (fb *FrameBuffer) RemoveSentFramesFromBuffer(secondsToRemove int) {
 }
 
 func (fb *FrameBuffer) GetLengthInFrames() uint64 { // Frame Buffer length in number of frames
-	if fb.head >= fb.tail {
-		return (fb.head - fb.tail) / FrameSize
-	}
-	return (BufferSize - fb.tail + fb.head) / FrameSize
+	return (fb.head - fb.tail) / FrameSize
 }
 
 func (fb *FrameBuffer) GetNextFrameNumber() uint64 {
