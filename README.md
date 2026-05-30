@@ -5,88 +5,68 @@ A Go-based distributed rendering system that creates an ASCII art animation of a
 ## What is Distributed Donut?
 
 Distributed Donut demonstrates **browser-based distributed computing** by offloading CPU-intensive rendering calculations to multiple connected clients, then coordinating and broadcasting the results to create a seamless animation displayed on all connected browsers.
+## Going deeper
 
-## Architecture Overview
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the technical deep dive: the end-to-end
+data flow, the binary wire protocol, the ring buffer's invariants, the
+concurrency model, how the pipeline survives a churning fleet, and the design
+decisions behind each of those — with the alternatives that were weighed and the
+trade-offs accepted.
 
-> 📖 **Want the full picture?** [`ARCHITECTURE.md`](ARCHITECTURE.md) is the deep
-> dive — end-to-end data flow, each subsystem, the design decisions and their
-> rationale, the concurrency model, and known limitations. The section below is
-> just the high-level map.
 
-### Server-Side Components (Go)
+## Quick start
 
-- **Entrypoint** (`cmd/donut-server`): Wires the pipeline together and handles startup/shutdown
-- **HTTP/WebSocket Server** (`internal/server`): Handles WebSocket connections and serves the web client
-- **Frame Orchestrator** (`internal/orchestrator`): Central controller coordinating the rendering pipeline; also owns the **Frame Batch Map** that manages rendering tasks and handles failures
-- **Frame Buffer** (`internal/buffer`): Circular buffer storing rendered frames (~30 minutes capacity)
-- **Client Pool** (`internal/client`): Tracks all connected clients for task distribution
-- **Wire Protocol** (`internal/protocol`): Frame sizing constants, message types, and encode/decode helpers
+Requires Go 1.22+.
 
-### Client-Side Components (JavaScript)
+```bash
+go run ./cmd/donut-server
+```
 
-- **Client JavaScript** (`web/static/script.js`): Establishes WebSocket connection and displays animation
-- **Web Worker** (`web/static/donut-worker.js`): Performs rendering calculations in separate thread
+Open <http://localhost:8080>, then open it in a few more tabs — each one pitches
+in as a worker.
 
-The browser client in `web/static` is embedded into the binary via `go:embed`, so the server runs from anywhere without needing the source tree.
+## Commands
 
-### Project Layout
+| Command | Description |
+| --- | --- |
+| `go run ./cmd/donut-server` | Run the server on `:8080` |
+| `go build ./cmd/donut-server` | Build the `donut-server` binary |
+| `go test ./...` | Run the tests |
+
+The browser client in `web/static` is embedded into the binary with `go:embed`,
+so the build runs from anywhere with no extra files alongside it.
+
+## How it works
+
+1. A browser connects over WebSocket and spawns a Web Worker.
+2. The server assigns it a contiguous range of frames to render.
+3. The worker runs the donut math off the UI thread, packs the frames, and sends
+   them back.
+4. The server stores completed frames in a ring buffer and broadcasts them to
+   every connected browser.
+5. Each browser plays the stream back at 60fps.
+
+If a worker goes quiet, its batch is reassigned to another. Frames are a pure
+function of their frame number, so the work is safe to retry and hand off.
+
+## Layout
 
 ```
-cmd/donut-server/      # main package — the runnable binary
+cmd/donut-server/   the runnable binary
 internal/
-  protocol/            # wire format: constants, message types, encode/decode (no deps)
-  buffer/              # FrameBuffer ring
-  client/              # Client + ClientPool
-  orchestrator/        # dispatch/broadcast loops + FrameBatchMap
-  server/              # HTTP + WebSocket handlers
-  debug/               # optional console renderer (build with -tags debug)
-web/                   # embedded static browser client
+  protocol/         wire format: constants, message tags, encode/decode
+  buffer/           the ring buffer of rendered frames
+  client/           one worker connection, and the pool of all of them
+  orchestrator/     the dispatch and broadcast loops
+  server/           HTTP and WebSocket handlers
+web/                embedded browser client (HTML/CSS/JS)
 ```
 
-## How It Works
+## Credits
 
-1. **Client Connection**: Browsers connect via WebSocket
-2. **Task Dispatch**: Server assigns frame ranges (e.g., frames 0-59) to clients
-3. **Distributed Rendering**: Clients render ASCII frames using 3D mathematics
-4. **Result Collection**: Clients encode and send completed frames back to server
-5. **Frame Storage**: Server stores frames in circular buffer
-6. **Broadcasting**: Server broadcasts frames to ALL clients for synchronized playback
-7. **Animation Display**: Clients decode frames and display the rotating donut
+The donut is [a1k0n's `donut.c`](https://www.a1k0n.net/2011/07/20/donut-math.html),
+ported to JavaScript.
 
-## Technical Features
+## License
 
-### Communication Protocol
-Uses binary WebSocket messages with three message types:
-- **RenderTask** (0x0): Server → Client task assignment
-- **RenderResult** (0x1): Client → Server frame submission  
-- **FrameBroadcast** (0x2): Server → All Clients frame distribution
-
-### ASCII Donut Algorithm
-Uses a1k0n's incredible [donut.c](https://www.a1k0n.net/2011/07/20/donut-math.html).
-
-### Frame Encoding/Decoding
-- Efficient compression: Each character mapped to 4-bit index
-- Two characters packed per byte (50% compression)
-- Example: 'A' (index 5) + 'B' (index 7) → byte `0x57`
-
-### Configuration
-- **FramesPerBatch**: 60 frames (1 second at 60fps)
-- **Buffer Capacity**: 108,000 frames (~30 minutes)
-- **Task Timeout**: 2 seconds with automatic reassignment
-- **Playback Rate**: 60fps for smooth animation
-
-## Key Benefits
-
-✅ **Distributed Computing**: Harnesses multiple browser clients for parallel processing  
-✅ **Real-time Coordination**: Synchronizes rendering across all connected clients  
-✅ **Fault Tolerance**: Automatic task reassignment on client failures  
-✅ **Efficient Protocol**: Binary WebSocket with 50% compression  
-✅ **Non-blocking**: Web Workers prevent UI freezing  
-✅ **Scalable**: Dynamic client management with graceful handling  
-
-## Getting Started
-
-1. **Prerequisites**: Go 1.22+ installed
-2. **Run Server**: `go run ./cmd/donut-server` (or `go build ./cmd/donut-server` then `./donut-server`)
-3. **Open Browser**: Navigate to `http://localhost:8080`
-4. **Watch Magic**: See the distributed ASCII donut animation!
+[MIT](LICENSE) © Issam Boubcher
