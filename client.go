@@ -94,6 +94,7 @@ func (c *Client) HandleReceivedMessage(data []byte) error {
 	messageType := data[0]
 	if messageType != MessageTypeRenderResult {
 		log.Println("Invalid message type received")
+		return nil
 	}
 	renderResult, err := NewRenderResult(data[1:])
 	if err != nil {
