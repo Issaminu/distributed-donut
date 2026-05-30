@@ -1,5 +1,5 @@
 // Credit to a1k0n for the origin of the spinning donut: https://www.a1k0n.net/2011/07/20/donut-math.html
-const asciiframe = function (frameNumber) {
+const asciiframe = (frameNumber) => {
   const A = 1 + 0.07 * frameNumber;
   const B = 1 + 0.03 * frameNumber;
   const b = [];
@@ -90,7 +90,7 @@ function encodeRenderResult(renderTaskID, frames) {
   return result;
 }
 
-self.onmessage = function (e) {
+self.onmessage = (e) => {
   const { renderTaskID, startFrame, endFrame } = e.data;
   const renderResult = createFrames(startFrame, endFrame);
   const encodedData = encodeRenderResult(renderTaskID, renderResult);
