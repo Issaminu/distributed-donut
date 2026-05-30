@@ -1,8 +1,13 @@
-package main
+package client
 
 import (
+	"log"
 	"math/rand"
 	"sync"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/Issaminu/distributed-donut/internal/protocol"
 )
 
 type ClientPool struct {
@@ -20,6 +25,7 @@ func NewClientPool() *ClientPool {
 func (p *ClientPool) AddClient(client *Client) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	client.pool = p
 	p.clients[client] = struct{}{}
 	p.cond.Broadcast()
 }
@@ -71,4 +77,20 @@ func (p *ClientPool) PickNewClient() *Client {
 		keys = append(keys, c)
 	}
 	return keys[rand.Intn(len(keys))]
+}
+
+// Broadcast sends one frame batch to every connected client. The message is
+// prepared once (so its compressed on-wire form is computed a single time)
+// rather than per-client.
+func (p *ClientPool) Broadcast(frames []byte) {
+	encodedFrames := protocol.EncodeFrameBroadcast(frames)
+
+	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, encodedFrames)
+	if err != nil {
+		log.Println("Failed to prepare broadcast message:", err)
+		return
+	}
+	for _, client := range p.Snapshot() {
+		client.enqueue(prepared)
+	}
 }

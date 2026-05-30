@@ -1,7 +1,10 @@
-package main
+// Package client models a connected worker (a browser running the donut
+// renderer): the websocket plumbing to talk to it, and the pool that tracks all of them.
+// Received results are surfaced through an injected ResultHandler so the
+// orchestrator can wire in its own storage without creating an import cycle.
+package client
 
 import (
-	"encoding/binary"
 	"errors"
 	"log"
 	"sync"
@@ -9,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Issaminu/distributed-donut/internal/protocol"
 )
 
 // clientIDCounter hands out monotonically increasing, never-reused client IDs.
@@ -21,8 +26,12 @@ const (
 	// maxIncomingMessageBytes bounds the size of a message we'll read from a client. The only thing a client ever sends is a RenderResult:
 	// 1 byte message type + 4 bytes render task ID + BatchSize bytes of frames.
 	// This is done so that a misbehaving client can't stream us unbounded data or a decompression bomb.
-	maxIncomingMessageBytes = 1 + 4 + BatchSize
+	maxIncomingMessageBytes = 1 + 4 + protocol.BatchSize
 )
+
+// ResultHandler is called with each RenderResult a client sends back. The
+// orchestrator supplies the implementation when constructing a client.
+type ResultHandler func(clientID uint32, result *protocol.RenderResult) error
 
 type Client struct {
 	id             uint32
@@ -32,21 +41,27 @@ type Client struct {
 	send           chan *websocket.PreparedMessage // outbound messages, drained by the writer goroutine. it is a PreparedMessage so its on-wire (compressed) form is computed once
 	quit           chan struct{}                   // closed to stop the writer goroutine
 	closeOnce      sync.Once
+	onResult       ResultHandler // invoked when the client sends back a RenderResult
+	pool           *ClientPool   // set when the client is added to a pool, so close() can remove it
 }
 
-func NewClient(ws *websocket.Conn) *Client {
+func NewClient(ws *websocket.Conn, onResult ResultHandler) *Client {
 	ws.SetReadLimit(maxIncomingMessageBytes)
 	return &Client{
-		id:   clientIDCounter.Add(1),
-		conn: ws,
-		send: make(chan *websocket.PreparedMessage, clientSendQueueSize),
-		quit: make(chan struct{}),
+		id:       clientIDCounter.Add(1),
+		conn:     ws,
+		send:     make(chan *websocket.PreparedMessage, clientSendQueueSize),
+		quit:     make(chan struct{}),
+		onResult: onResult,
 	}
 }
 
-// Goroutine that handles sending messages to a client.
-// Each connected client has it's own independant writePump().
-func (c *Client) writePump() {
+// ID returns the client's stable, unique identifier.
+func (c *Client) ID() uint32 { return c.id }
+
+// WritePump is the goroutine that handles sending messages to a client.
+// Each connected client has its own independent WritePump().
+func (c *Client) WritePump() {
 	for {
 		select {
 		case <-c.quit:
@@ -54,12 +69,12 @@ func (c *Client) writePump() {
 		case msg := <-c.send:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				log.Println(err)
-				c.close()
+				c.Close()
 				return
 			}
 			if err := c.conn.WritePreparedMessage(msg); err != nil {
 				log.Println(err)
-				c.close() // dead connection; tear down so the read loop unblocks too
+				c.Close() // dead connection; tear down so the read loop unblocks too
 				return
 			}
 		}
@@ -77,36 +92,35 @@ func (c *Client) enqueue(msg *websocket.PreparedMessage) {
 	}
 }
 
-// close tears the client down exactly once: stops the writer, closes the
+// Close tears the client down exactly once: stops the writer, closes the
 // connection (which unblocks the reader), and removes it from the pool.
-func (c *Client) close() {
+func (c *Client) Close() {
 	c.closeOnce.Do(func() {
 		close(c.quit)
 		c.conn.Close()
-		clientPool.RemoveClient(c)
+		if c.pool != nil {
+			c.pool.RemoveClient(c)
+		}
 	})
 }
-
-const (
-	MessageTypeRenderTask     = 0x0 // 0000 - Represents requesting work (compute) from workers/clients
-	MessageTypeRenderResult   = 0x1 // 0001 - Represents delivering rendered frame batch(s) from a worker/client to the orchestrator
-	MessageTypeFrameBroadcast = 0x2 // 0010 - Represents broadcasting frame batch(s) to all workers/clients
-)
 
 func (c *Client) HandleReceivedMessage(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("received empty message")
 	}
 	messageType := data[0]
-	if messageType != MessageTypeRenderResult {
+	if messageType != protocol.MessageTypeRenderResult {
 		log.Println("Invalid message type received")
 		return nil
 	}
-	renderResult, err := NewRenderResult(data[1:])
+	renderResult, err := protocol.NewRenderResult(data[1:])
 	if err != nil {
 		return err
 	}
-	return frameBatchMap.SaveRenderResult(c.id, renderResult)
+	if c.onResult == nil {
+		return nil
+	}
+	return c.onResult(c.id, renderResult)
 }
 
 func (c *Client) GenerateNewRenderTaskID() uint32 {
@@ -117,28 +131,8 @@ func (c *Client) GenerateNewRenderTaskID() uint32 {
 	return newRenderTaskID
 }
 
-func sendFramesToAllClients(frames []byte) {
-	encodedFrames := make([]byte, len(frames)+1) // +1 to include the message type byte
-	encodedFrames[0] = MessageTypeFrameBroadcast
-	copy(encodedFrames[1:], frames)
-
-	// Prepare the broadcast once. PreparedMessage is the prepared form by gorilla that's ready-made for getting sent. We only create it once so that we only compress it once, which is ideal so that we don't compress for each connected client
-	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, encodedFrames)
-	if err != nil {
-		log.Println("Failed to prepare broadcast message:", err)
-		return
-	}
-	for _, client := range clientPool.Snapshot() {
-		client.enqueue(prepared)
-	}
-}
-
 func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame uint32) {
-	requestedWork := make([]byte, 13) //  1 byte for message type + 4 bytes for RenderTask ID + 4 bytes for startFrame + 4 bytes for endFrame
-	requestedWork[0] = MessageTypeRenderTask
-	binary.BigEndian.PutUint32(requestedWork[1:5], renderTaskID)
-	binary.BigEndian.PutUint32(requestedWork[5:9], startFrame)
-	binary.BigEndian.PutUint32(requestedWork[9:13], endFrame)
+	requestedWork := protocol.EncodeRenderTask(renderTaskID, startFrame, endFrame)
 
 	// Prepared like the broadcast so the writer goroutine has a single path; this
 	// message has one recipient, so there's no compression sharing to gain, just

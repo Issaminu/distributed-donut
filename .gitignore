@@ -1,2 +1,8 @@
-distributed-donut
+# Build output
+/distributed-donut
+/donut-server
+/cmd/donut-server/donut-server
+
+# Editors
 .idea
+.vscode

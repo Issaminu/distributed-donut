@@ -1,22 +1,26 @@
-package main
+package orchestrator
 
 import (
 	"log"
 	"sync"
+
+	"github.com/Issaminu/distributed-donut/internal/buffer"
+	"github.com/Issaminu/distributed-donut/internal/client"
+	"github.com/Issaminu/distributed-donut/internal/protocol"
 )
 
 type FrameBatchMap struct {
 	frameBatches map[uint32]map[uint32]FrameBatchMetadata // Map<client ID, Map<render task ID, frame batch metadata>>
 	mutex        sync.Mutex
+	buffer       *buffer.FrameBuffer // where completed render results are committed
 }
 
-func NewFrameBatchMap() *FrameBatchMap {
+func NewFrameBatchMap(fb *buffer.FrameBuffer) *FrameBatchMap {
 	return &FrameBatchMap{
 		frameBatches: make(map[uint32]map[uint32]FrameBatchMetadata),
+		buffer:       fb,
 	}
 }
-
-var frameBatchMap = NewFrameBatchMap()
 
 func (fbMap *FrameBatchMap) AddFrameBatch(clientID uint32, frameBatch *FrameBatchMetadata) {
 	fbMap.mutex.Lock()
@@ -24,7 +28,7 @@ func (fbMap *FrameBatchMap) AddFrameBatch(clientID uint32, frameBatch *FrameBatc
 	if _, ok := fbMap.frameBatches[clientID]; !ok {
 		fbMap.frameBatches[clientID] = make(map[uint32]FrameBatchMetadata)
 	}
-	fbMap.frameBatches[clientID][frameBatch.renderTask.id] = *frameBatch
+	fbMap.frameBatches[clientID][frameBatch.renderTask.ID] = *frameBatch
 }
 
 func (fbMap *FrameBatchMap) GetLength(ClientID uint32) uint32 {
@@ -33,19 +37,19 @@ func (fbMap *FrameBatchMap) GetLength(ClientID uint32) uint32 {
 	return uint32(len(fbMap.frameBatches[ClientID]))
 }
 
-func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, clientID uint32, newClient *Client) uint32 {
+func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, clientID uint32, newClient *client.Client) uint32 {
 	fbMap.mutex.Lock()
 	defer fbMap.mutex.Unlock()
-	if clientID == newClient.id {
+	if clientID == newClient.ID() {
 		panic("clientID and newClientID cannot be the same")
 	}
-	log.Println("Assigning render task to client", newClient.id, "instead of client", clientID)
+	log.Println("Assigning render task to client", newClient.ID(), "instead of client", clientID)
 	fbMeta := fbMap.frameBatches[clientID][renderTaskID]
 	newRenderTaskID := newClient.GenerateNewRenderTaskID()
-	if _, ok := fbMap.frameBatches[newClient.id]; !ok {
-		fbMap.frameBatches[newClient.id] = make(map[uint32]FrameBatchMetadata)
+	if _, ok := fbMap.frameBatches[newClient.ID()]; !ok {
+		fbMap.frameBatches[newClient.ID()] = make(map[uint32]FrameBatchMetadata)
 	}
-	fbMap.frameBatches[newClient.id][newRenderTaskID] = fbMeta
+	fbMap.frameBatches[newClient.ID()][newRenderTaskID] = fbMeta
 	delete(fbMap.frameBatches[clientID], renderTaskID)
 	if len(fbMap.frameBatches[clientID]) == 0 {
 		delete(fbMap.frameBatches, clientID)
@@ -62,25 +66,25 @@ func (fbMap *FrameBatchMap) DeleteRenderTask(clientID uint32, renderTaskID uint3
 	}
 }
 
-func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *RenderResult) error {
+func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *protocol.RenderResult) error {
 	fbMap.mutex.Lock()
 	defer fbMap.mutex.Unlock()
-	if _, ok := fbMap.frameBatches[clientID][renderResult.id]; !ok {
-		log.Printf("Warning: Client %d is trying to save a render result for a task %d that isn't assigned to them", clientID, renderResult.id)
+	if _, ok := fbMap.frameBatches[clientID][renderResult.ID]; !ok {
+		log.Printf("Warning: Client %d is trying to save a render result for a task %d that isn't assigned to them", clientID, renderResult.ID)
 		return nil
 	}
 
-	batchMetadata := fbMap.frameBatches[clientID][renderResult.id]
+	batchMetadata := fbMap.frameBatches[clientID][renderResult.ID]
 	if batchMetadata.completed {
 		return nil // duplicate result for an already-completed task; ignore so we don't double-close done
 	}
 
 	// TODO: validate render task results. Clients are untrusted, yet we commit their raw frame bytes straight into the shared buffer that everyone plays back. A buggy or malicious client can corrupt the animation for all viewers.
-	if err := frameBuffer.AddFramesToBuffer(batchMetadata.renderTask.startFrame, batchMetadata.renderTask.endFrame, &renderResult.frames); err != nil {
+	if err := fbMap.buffer.AddFramesToBuffer(batchMetadata.renderTask.StartFrame, batchMetadata.renderTask.EndFrame, &renderResult.Frames); err != nil {
 		return err
 	}
 	batchMetadata.completed = true
-	fbMap.frameBatches[clientID][renderResult.id] = batchMetadata
+	fbMap.frameBatches[clientID][renderResult.ID] = batchMetadata
 	close(batchMetadata.done) // wake the dispatcher goroutine waiting on this task
 	return nil
 }

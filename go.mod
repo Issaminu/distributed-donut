@@ -1,4 +1,4 @@
-module distributed-donut
+module github.com/Issaminu/distributed-donut
 
 go 1.22.4
 

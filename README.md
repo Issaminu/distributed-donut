@@ -10,16 +10,33 @@ Distributed Donut demonstrates **browser-based distributed computing** by offloa
 
 ### Server-Side Components (Go)
 
-- **Main Server** (`main.go`): Handles WebSocket connections and HTTP routing
-- **Frame Orchestrator** (`orchestator.go`): Central controller coordinating the rendering pipeline
-- **Frame Buffer**: Circular buffer storing rendered frames (~30 minutes capacity)
-- **Client Pool**: Tracks all connected clients for task distribution
-- **Frame Batch Map**: Manages rendering tasks and handles failures
+- **Entrypoint** (`cmd/donut-server`): Wires the pipeline together and handles startup/shutdown
+- **HTTP/WebSocket Server** (`internal/server`): Handles WebSocket connections and serves the web client
+- **Frame Orchestrator** (`internal/orchestrator`): Central controller coordinating the rendering pipeline; also owns the **Frame Batch Map** that manages rendering tasks and handles failures
+- **Frame Buffer** (`internal/buffer`): Circular buffer storing rendered frames (~30 minutes capacity)
+- **Client Pool** (`internal/client`): Tracks all connected clients for task distribution
+- **Wire Protocol** (`internal/protocol`): Frame sizing constants, message types, and encode/decode helpers
 
 ### Client-Side Components (JavaScript)
 
-- **Client JavaScript**: Establishes WebSocket connection and displays animation
-- **Web Worker** (`donut-worker.js`): Performs rendering calculations in separate thread
+- **Client JavaScript** (`web/static/script.js`): Establishes WebSocket connection and displays animation
+- **Web Worker** (`web/static/donut-worker.js`): Performs rendering calculations in separate thread
+
+The browser client in `web/static` is embedded into the binary via `go:embed`, so the server runs from anywhere without needing the source tree.
+
+### Project Layout
+
+```
+cmd/donut-server/      # main package — the runnable binary
+internal/
+  protocol/            # wire format: constants, message types, encode/decode (no deps)
+  buffer/              # FrameBuffer ring
+  client/              # Client + ClientPool
+  orchestrator/        # dispatch/broadcast loops + FrameBatchMap
+  server/              # HTTP + WebSocket handlers
+  debug/               # optional console renderer (build with -tags debug)
+web/                   # embedded static browser client
+```
 
 ## How It Works
 
@@ -64,7 +81,7 @@ Uses a1k0n's incredible [donut.c](https://www.a1k0n.net/2011/07/20/donut-math.ht
 
 ## Getting Started
 
-1. **Prerequisites**: Go 1.x installed
-2. **Run Server**: `go run .`
+1. **Prerequisites**: Go 1.22+ installed
+2. **Run Server**: `go run ./cmd/donut-server` (or `go build ./cmd/donut-server` then `./donut-server`)
 3. **Open Browser**: Navigate to `http://localhost:8080`
 4. **Watch Magic**: See the distributed ASCII donut animation!

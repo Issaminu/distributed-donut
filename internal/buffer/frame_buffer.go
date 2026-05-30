@@ -1,4 +1,6 @@
-package main
+// Package buffer holds the server's circular frame buffer: the single source of
+// truth for which frames have been rendered and are ready to broadcast.
+package buffer
 
 import (
 	"errors"
@@ -7,6 +9,14 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/Issaminu/distributed-donut/internal/protocol"
+)
+
+const (
+	MaxBatches = 30 * 60                              // 1800 batches/seconds ~= 30 Minutes (Could go longer but it would consume much more memory for no benefit)
+	MaxFrames  = MaxBatches * protocol.FramesPerBatch // Maximum amount of frames we can hold in the buffer
+	BufferSize = MaxFrames * protocol.FrameSize       // Buffer size in bytes
 )
 
 type FrameBuffer struct {
@@ -26,9 +36,7 @@ func NewFrameBuffer() *FrameBuffer {
 	return &fb
 }
 
-var frameBuffer = NewFrameBuffer()
-
-func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[BatchSize]byte) error {
+func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, data *[protocol.BatchSize]byte) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 	log.Println("====== Adding frames from", startFrame, "to", endFrame, "======")
@@ -37,8 +45,8 @@ func (fb *FrameBuffer) AddFramesToBuffer(startFrame uint32, endFrame uint32, dat
 		return errors.New("start frame is greater than end frame")
 	}
 
-	batchStartIndex := (startFrame * FrameSize) % BufferSize
-	batchEndIndex := batchStartIndex + BatchSize
+	batchStartIndex := (startFrame * protocol.FrameSize) % BufferSize
+	batchEndIndex := batchStartIndex + protocol.BatchSize
 
 	copy(fb.buffer[batchStartIndex:batchEndIndex], data[:])
 
@@ -55,7 +63,7 @@ func (fb *FrameBuffer) GetFramesToBroadcast(seconds int) []byte {
 		return nil
 	}
 
-	deltaToBroadcast := uint64((seconds * FramesPerBatch) * FrameSize)
+	deltaToBroadcast := uint64((seconds * protocol.FramesPerBatch) * protocol.FrameSize)
 	result := make([]byte, deltaToBroadcast)
 
 	// Copy from the tail, wrapping around the end of the ring if necessary.
@@ -75,33 +83,33 @@ func (fb *FrameBuffer) GetFramesToBroadcast(seconds int) []byte {
 func (fb *FrameBuffer) RemoveSentFramesFromBuffer(secondsToRemove int) {
 	fb.mu.Lock()
 
-	framesToRemove := uint64(secondsToRemove * FramesPerBatch)
+	framesToRemove := uint64(secondsToRemove * protocol.FramesPerBatch)
 
 	bufferLength := fb.GetLengthInFrames()
 	if framesToRemove > bufferLength {
 		panic(fmt.Sprintf("Removing %d frames from a buffer that's only %d in size", framesToRemove, bufferLength))
 	}
-	fb.tail += framesToRemove * FrameSize
+	fb.tail += framesToRemove * protocol.FrameSize
 
 	fb.mu.Unlock()
 	fb.cond.Broadcast()
 }
 
 func (fb *FrameBuffer) GetLengthInFrames() uint64 { // Frame Buffer length in number of frames
-	return (fb.head - fb.tail) / FrameSize
+	return (fb.head - fb.tail) / protocol.FrameSize
 }
 
 func (fb *FrameBuffer) GetNextFrameNumber() uint64 {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
-	return (fb.head / FrameSize) % MaxFrames
+	return (fb.head / protocol.FrameSize) % MaxFrames
 }
 
 func (fb *FrameBuffer) isBufferSizeEnoughForBroadcast(seconds int) bool {
 	length := fb.GetLengthInFrames()
 
-	return length >= uint64(seconds)*FramesPerBatch
+	return length >= uint64(seconds)*protocol.FramesPerBatch
 }
 
 func (fb *FrameBuffer) frameBatchesRemainingToFullBuffer() uint64 {
@@ -112,7 +120,7 @@ func (fb *FrameBuffer) frameBatchesRemainingToFullBuffer() uint64 {
 	framesInBuffer := fb.GetLengthInFrames()
 	framesRemainingToFullBuffer := MaxFrames - framesInBuffer
 
-	frameBatchesRemainingToFullBuffer := framesRemainingToFullBuffer / FramesPerBatch // this can be 0.something, if so, we consider the FrameBuffer to be full. TODO: add more surgical/precise handling for sub-Batch Render Tasks.
+	frameBatchesRemainingToFullBuffer := framesRemainingToFullBuffer / protocol.FramesPerBatch // this can be 0.something, if so, we consider the FrameBuffer to be full. TODO: add more surgical/precise handling for sub-Batch Render Tasks.
 
 	return frameBatchesRemainingToFullBuffer
 }
@@ -124,7 +132,10 @@ func (fb *FrameBuffer) isBufferFull() bool {
 // When our buffer is close to empty, we rapidly trigger tasks to quickly fill it up.
 // When our buffer is getting closer to full, we start to slow down the rate at which we trigger tasks, since it's no longer urgent.
 // The sleep duration grows exponentially as the frame buffer is getting full (i.e. as `frameBatchesRemainingToFullBuffer` approaches 0).
-func (fb *FrameBuffer) timeToSleep(frameBatchesRemainingToFullBuffer uint64) time.Duration {
+// maxSleep is the upper bound for the pacing delay; the caller decides it (it
+// equals the buffered playback duration it is willing to tolerate).
+// TODO: make this less aggressive at the early stages of filling the buffer
+func (fb *FrameBuffer) timeToSleep(frameBatchesRemainingToFullBuffer uint64, maxSleep time.Duration) time.Duration {
 	if frameBatchesRemainingToFullBuffer >= MaxBatches {
 		return 0
 	}
@@ -134,10 +145,7 @@ func (fb *FrameBuffer) timeToSleep(frameBatchesRemainingToFullBuffer uint64) tim
 
 	// k: the steepness knob of how fast do we want to ramp up
 	const k = 2.0
-	// Scale the exponential to the buffered playback duration: a full buffer holds
-	// secondsToBroadcast seconds of playback, so that's the upper bound for how long it makes
-	// sense to wait before dispatching the next task.
-	const maxSleepSeconds = float64(secondsToBroadcast) // = 4
+	maxSleepSeconds := maxSleep.Seconds()
 	seconds := maxSleepSeconds * (math.Exp(k*fullness) - 1) / (math.Exp(k) - 1)
 
 	return time.Duration(seconds * float64(time.Second))
@@ -157,13 +165,13 @@ func (fb *FrameBuffer) WaitUntilBufferSizeEnoughForBroadcast(seconds int) {
 func (fb *FrameBuffer) AdvanceHead(batchesToFetch int) {
 	fb.mu.Lock()
 
-	fb.head += uint64(batchesToFetch * BatchSize)
+	fb.head += uint64(batchesToFetch * protocol.BatchSize)
 	fb.mu.Unlock()
 	fb.cond.Broadcast()
 }
 
-// Park if the buffer is full or if there's no connected clients to work
-func (fb *FrameBuffer) WaitForRoom(batchesToFetch int) {
+// WaitForRoom parks until the buffer has room for batchesToFetch more batches, then returns how long the caller should pace before dispatching the next round. maxSleep bounds that pacing delay.
+func (fb *FrameBuffer) WaitForRoom(batchesToFetch int, maxSleep time.Duration) time.Duration {
 	fb.mu.Lock()
 
 	for fb.frameBatchesRemainingToFullBuffer() < uint64(batchesToFetch) {
@@ -172,9 +180,5 @@ func (fb *FrameBuffer) WaitForRoom(batchesToFetch int) {
 	frameBatchesRemaining := fb.frameBatchesRemainingToFullBuffer()
 	fb.mu.Unlock()
 
-	clientPool.WaitForAtLeastOne()
-
-	sleepTime := fb.timeToSleep(frameBatchesRemaining)
-	log.Printf("Triggering task dispatcher in %0.2f seconds", sleepTime.Seconds())
-	time.Sleep(sleepTime)
+	return fb.timeToSleep(frameBatchesRemaining, maxSleep)
 }

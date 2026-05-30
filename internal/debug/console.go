@@ -1,4 +1,10 @@
-package main
+//go:build debug
+
+// Package debug contains an optional, build-tagged console renderer used to
+// eyeball decoded frames in the terminal. It is compiled only with
+// `-tags debug` and is not wired into the default build. Feed frames into
+// LogChan to see them drawn.
+package debug
 
 import (
 	"context"
@@ -10,7 +16,11 @@ import (
 	"time"
 )
 
-func consoleDrawer(ctx context.Context) {
+// LogChan receives encoded frame bytes to draw. Nothing writes to it by
+// default; wire it up where frames are produced when debugging.
+var LogChan = make(chan []byte)
+
+func ConsoleDrawer(ctx context.Context) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -22,7 +32,7 @@ func consoleDrawer(ctx context.Context) {
 		case <-ctx.Done():
 			fmt.Println("Animation renderer shutting down...")
 			return
-		case newFrames := <-logChan:
+		case newFrames := <-LogChan:
 			frames = append(frames, newFrames...)
 		case <-ticker.C:
 			if len(frames) > 0 {
