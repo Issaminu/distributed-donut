@@ -47,6 +47,9 @@ func (fbMap *FrameBatchMap) SwitchRenderTaskExecutor(renderTaskID uint32, client
 	}
 	fbMap.frameBatches[newClient.id][newRenderTaskID] = fbMeta
 	delete(fbMap.frameBatches[clientID], renderTaskID)
+	if len(fbMap.frameBatches[clientID]) == 0 {
+		delete(fbMap.frameBatches, clientID)
+	}
 	return newRenderTaskID
 }
 
