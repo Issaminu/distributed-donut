@@ -29,8 +29,8 @@ type Client struct {
 	conn           *websocket.Conn
 	mutex          sync.Mutex
 	numRenderTasks uint32
-	send           chan []byte   // outbound messages, drained by the writer goroutine
-	quit           chan struct{} // closed to stop the writer goroutine
+	send           chan *websocket.PreparedMessage // outbound messages, drained by the writer goroutine. it is a PreparedMessage so its on-wire (compressed) form is computed once
+	quit           chan struct{}                   // closed to stop the writer goroutine
 	closeOnce      sync.Once
 }
 
@@ -39,7 +39,7 @@ func NewClient(ws *websocket.Conn) *Client {
 	return &Client{
 		id:   clientIDCounter.Add(1),
 		conn: ws,
-		send: make(chan []byte, clientSendQueueSize),
+		send: make(chan *websocket.PreparedMessage, clientSendQueueSize),
 		quit: make(chan struct{}),
 	}
 }
@@ -57,7 +57,7 @@ func (c *Client) writePump() {
 				c.close()
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+			if err := c.conn.WritePreparedMessage(msg); err != nil {
 				log.Println(err)
 				c.close() // dead connection; tear down so the read loop unblocks too
 				return
@@ -69,7 +69,7 @@ func (c *Client) writePump() {
 // enqueue hands a message to the client's writer without blocking. A full queue
 // means the client can't keep up, so we drop the message rather than stall
 // everyone else.
-func (c *Client) enqueue(msg []byte) {
+func (c *Client) enqueue(msg *websocket.PreparedMessage) {
 	select {
 	case c.send <- msg:
 	default:
@@ -121,8 +121,15 @@ func sendFramesToAllClients(frames []byte) {
 	encodedFrames := make([]byte, len(frames)+1) // +1 to include the message type byte
 	encodedFrames[0] = MessageTypeFrameBroadcast
 	copy(encodedFrames[1:], frames)
+
+	// Prepare the broadcast once. PreparedMessage is the prepared form by gorilla that's ready-made for getting sent. We only create it once so that we only compress it once, which is ideal so that we don't compress for each connected client
+	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, encodedFrames)
+	if err != nil {
+		log.Println("Failed to prepare broadcast message:", err)
+		return
+	}
 	for _, client := range clientPool.Snapshot() {
-		client.enqueue(encodedFrames)
+		client.enqueue(prepared)
 	}
 }
 
@@ -132,5 +139,14 @@ func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame ui
 	binary.BigEndian.PutUint32(requestedWork[1:5], renderTaskID)
 	binary.BigEndian.PutUint32(requestedWork[5:9], startFrame)
 	binary.BigEndian.PutUint32(requestedWork[9:13], endFrame)
-	c.enqueue(requestedWork)
+
+	// Prepared like the broadcast so the writer goroutine has a single path; this
+	// message has one recipient, so there's no compression sharing to gain, just
+	// uniformity.
+	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, requestedWork)
+	if err != nil {
+		log.Println("Failed to prepare render task message:", err)
+		return
+	}
+	c.enqueue(prepared)
 }
