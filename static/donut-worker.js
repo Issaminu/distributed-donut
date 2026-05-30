@@ -54,18 +54,22 @@ function createFrames(startFrame, endFrame) {
 
 const possibleCharacters = ".,-~:;=!*#$@ \n";
 
+const charToIndex = Object.fromEntries(
+  [...possibleCharacters].map((char, index) => [char, index])
+);
+
 // Encoding frames
 function encodeRenderResult(renderTaskID, frames) {
   const encodedFrames = frames.flatMap((frame) => {
     const bytes = [];
     for (let i = 0; i < frame.length; i += 2) {
       const char1 = frame[i];
-      const char2 = i + 1 < frame.length ? frame[i + 1] : 12; // possibleCharacters[12]=space ; Used here if there's no second character
+      const char2 = i + 1 < frame.length ? frame[i + 1] : " "; // pad with a space when a frame has an odd character count
 
-      const index1 = possibleCharacters.indexOf(char1);
-      const index2 = possibleCharacters.indexOf(char2);
+      const index1 = charToIndex[char1];
+      const index2 = charToIndex[char2];
 
-      if (index1 === -1 || index2 === -1) {
+      if (index1 === undefined || index2 === undefined) {
         throw new Error(`Invalid character found: ${char1} or ${char2}`);
       }
 

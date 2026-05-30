@@ -52,7 +52,7 @@ window.onload = () => {
         if (frameBuffer.head !== frameBuffer.tail) {
           const newFrame = frameBuffer.get();
           if (newFrame !== undefined) {
-            donut.innerHTML = newFrame;
+            donut.textContent = newFrame;
           }
         }
         // Update last frame time
@@ -72,11 +72,11 @@ window.onload = () => {
 
   // Decoding frames
   function decodeFrames(encodedFrames) {
-    let currentFrame = "";
     const decodedFrames = [];
+    const chars = [];
 
-    // encodedFrames.slice(3).forEach((byte) => { // Skip the first three bytes, the first for messageType and the other two are for renderTaskID, only do this when decoding the encoded frames on the same machine (i.e. when debugging)
-    encodedFrames.forEach((byte) => {
+    for (let i = 0; i < encodedFrames.length; i++) {
+      const byte = encodedFrames[i];
       const highNibble = (byte >> 4) & 0x0f;
       const lowNibble = byte & 0x0f;
 
@@ -87,16 +87,16 @@ window.onload = () => {
         throw new Error(`Invalid nibble value: ${highNibble} or ${lowNibble}`);
       }
 
-      currentFrame += char1 + char2;
+      chars.push(char1, char2);
 
-      if (currentFrame.length === DonutStringLength) {
-        decodedFrames.push(currentFrame);
-        currentFrame = "";
+      if (chars.length === DonutStringLength) {
+        decodedFrames.push(chars.join(""));
+        chars.length = 0; // reuse the array for the next frame
       }
-    });
+    }
 
-    if (currentFrame.length > 0) {
-      decodedFrames.push(currentFrame);
+    if (chars.length > 0) {
+      decodedFrames.push(chars.join(""));
     }
 
     return decodedFrames;
