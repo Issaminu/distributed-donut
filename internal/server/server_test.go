@@ -22,7 +22,7 @@ func newTestServer(t *testing.T, onResult client.ResultHandler, assets fs.FS) (*
 	t.Helper()
 	pool := client.NewClientPool()
 	s := New(pool, onResult, assets)
-	ts := httptest.NewServer(s.handler(context.Background()))
+	ts := httptest.NewServer(s.Handler(context.Background()))
 	t.Cleanup(ts.Close)
 	return ts, pool
 }
