@@ -44,12 +44,7 @@ func New(pool *client.ClientPool, onResult client.ResultHandler, assets fs.FS) *
 
 // ListenAndServe starts the HTTP server on addr and blocks until it stops. It shuts down gracefully when ctx is cancelled.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		s.handleNewConnection(ctx, w, r)
-	})
-	mux.Handle("/", http.FileServer(http.FS(s.assets)))
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: s.handler(ctx)}
 
 	go func() {
 		<-ctx.Done()
@@ -64,6 +59,15 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Server) handler(ctx context.Context) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		s.handleNewConnection(ctx, w, r)
+	})
+	mux.Handle("/", http.FileServer(http.FS(s.assets)))
+	return mux
 }
 
 func (s *Server) handleNewConnection(ctx context.Context, w http.ResponseWriter, r *http.Request) {
