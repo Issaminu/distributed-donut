@@ -8,6 +8,11 @@ Distributed Donut demonstrates **browser-based distributed computing** by offloa
 
 ## Architecture Overview
 
+> 📖 **Want the full picture?** [`ARCHITECTURE.md`](ARCHITECTURE.md) is the deep
+> dive — end-to-end data flow, each subsystem, the design decisions and their
+> rationale, the concurrency model, and known limitations. The section below is
+> just the high-level map.
+
 ### Server-Side Components (Go)
 
 - **Entrypoint** (`cmd/donut-server`): Wires the pipeline together and handles startup/shutdown
