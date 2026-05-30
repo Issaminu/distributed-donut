@@ -3,6 +3,9 @@
 /donut-server
 /cmd/donut-server/donut-server
 
+# Local config
+.env
+
 # Editors
 .idea
 .vscode
