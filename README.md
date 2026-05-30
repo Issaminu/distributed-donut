@@ -13,6 +13,10 @@ concurrency model, how the pipeline survives a churning fleet, and the design
 decisions behind each of those — with the alternatives that were weighed and the
 trade-offs accepted.
 
+[`BENCHMARKS.md`](BENCHMARKS.md) covers the benchmark suite: the micro-benchmarks
+on the CPU-bound hot paths, the end-to-end benchmarks that drive the real server,
+and how to run and compare them.
+
 
 ## Quick start
 
