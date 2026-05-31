@@ -198,6 +198,14 @@ client.
 | `0x0` | `RenderTask` | server → worker | `id:u32` · `startFrame:u32` · `endFrame:u32` (12 bytes) |
 | `0x1` | `RenderResult` | worker → server | `id:u32` · `frames:[BatchSize]byte` |
 | `0x2` | `FrameBroadcast` | server → all workers | `frames:[]byte` (one or more batches) |
+| `0x3` | `ClientCount` | server → all workers | `count:u32` (4 bytes) |
+| `0x4` | `BufferFullness` | server → all workers | `percent:u8` (1 byte, 0–100) |
+
+`0x3` and `0x4` are **telemetry**: the server periodically pushes the live count
+of connected workers and the ring buffer's fullness to every browser so each
+viewer can show what the fleet and the server are doing. They are pure
+side-channel — workers ignore them, and they never touch the frame timeline.
+Each is broadcast on its own configurable interval ([§10](#10-configuration-reference)).
 
 `id` is the **render task ID**, scoped per client (each `Client` hands out its
 own monotonically increasing IDs). It lets the server match a returning result
@@ -296,10 +304,12 @@ mutex, with a `sync.Cond` so producers can **block until at least one worker
 exists** (`WaitForAtLeastOne`, `PickNewClient`) — there's no point dispatching or
 broadcasting into an empty room. `Broadcast` prepares the message once and fans
 it out to a snapshot of clients ([DR-7](#dr-7-preparedmessage-for-broadcast)).
+The telemetry fan-outs (`BroadcastClientCount`, `BroadcastBufferFullness`) share
+that same prepare-once path via the internal `broadcastEncoded` helper.
 
 ### 5.4 Orchestrator — `internal/orchestrator`
 
-The coordinator. `Run` starts two goroutines:
+The coordinator. `Run` starts three goroutines:
 
 - **`dispatcher`** — each round, computes how many batches to fetch, waits for
   buffer room (and paces itself via [backpressure](#backpressure-the-timetosleep-curve)),
@@ -309,10 +319,16 @@ The coordinator. `Run` starts two goroutines:
 - **`broadcaster`** — waits for enough buffered frames, waits for an audience,
   copies a slice from the tail, broadcasts it, drops those frames, then sleeps
   `BroadcastInterval` so clients can consume what they were just sent.
+- **`telemetryBroadcaster`** — drives two independent `time.Ticker`s and, on each
+  tick, fans out the live connected-client count and the ring-buffer fullness to
+  the fleet. The two intervals are configured separately, and a non-positive
+  interval disables that ticker (its channel stays nil, so the `select` arm never
+  fires). Used by the harness to switch telemetry off entirely.
 
 Timing is fully configurable via a `Config` and functional `Option`s
-(`WithTaskTimeout`, `WithBroadcastInterval`, `WithBroadcastThresholds`);
-`DefaultConfig` holds the production values ([§10](#10-configuration-reference)).
+(`WithTaskTimeout`, `WithBroadcastInterval`, `WithBroadcastThresholds`,
+`WithClientCountInterval`, `WithBufferFullnessInterval`); `DefaultConfig` holds
+the production values ([§10](#10-configuration-reference)).
 
 `dispatchRenderTask` is where fault tolerance lives — it **never gives up** on a
 batch, retrying and reassigning until the frames come back. The reason is an
@@ -348,8 +364,10 @@ re-implements the same layout).
 - **`script.js`** — owns the WebSocket and a client-side **circular playback
   buffer** (1200 frames ≈ 20 s). It routes inbound `RenderTask`s to the worker,
   decodes inbound `FrameBroadcast`s into the buffer, and runs a
-  `requestAnimationFrame` draw loop that paints one frame every ~16.7 ms. On
-  disconnect it auto-reconnects.
+  `requestAnimationFrame` draw loop that paints one frame every ~16.7 ms. It also
+  decodes the two telemetry messages (`ClientCount`, `BufferFullness`) and renders
+  them in the stats panel — the fleet size as a live count and the server buffer
+  fullness as a labelled gauge. On disconnect it auto-reconnects.
 - **`donut-worker.js`** — a Web Worker so rendering never blocks the UI thread.
   It runs a1k0n's donut math for the requested frame range and nibble-encodes the
   batch into the `RenderResult` wire format before posting it back.
@@ -362,6 +380,28 @@ so the server is fully self-contained.
 A build-tagged (`-tags debug`) console renderer that decodes frames and draws
 them in the terminal — useful for eyeballing output without a browser. It is not
 compiled into the default build and nothing writes to it unless wired up.
+
+### 5.9 Observability — structured logging
+
+Logging is structured and leveled via the standard library's `log/slog`. The
+logger is built once in `main` (the composition root) and installed with
+`slog.SetDefault`, so packages log through the default logger rather than
+threading a logger value through every constructor.
+
+Two policies keep the output useful rather than noisy:
+
+- **Debug is sampled, warn/error are not.** Hot-path detail (per-round dispatch,
+  per-broadcast frame counts) logs at `Debug`, which would flood the output many
+  times a second. A custom `slog.Handler` wrapper (`samplingHandler`) throttles
+  `Debug` records to at most one per message string per `log-sample-interval`,
+  while everything at `Info` and above always passes through. A non-positive
+  interval disables sampling. The throttle state is shared across handlers derived
+  via `WithAttrs`/`WithGroup`, so adding context attributes can't defeat it.
+- **Disconnects aren't errors.** A normal browser close logs at `Debug`; only an
+  *unexpected* close (`websocket.IsUnexpectedCloseError`) logs at `Warn`, so
+  ordinary tab-closes don't masquerade as problems.
+
+Level and sample interval are configurable ([§10](#10-configuration-reference)).
 
 ---
 
@@ -479,6 +519,7 @@ The system is concurrent throughout, built from a small set of primitives.
 | `WritePump` | 1 per client | connection | The sole writer to a client's socket |
 | `broadcaster` | 1 | process | Consumer loop |
 | `dispatcher` | 1 | process | Producer loop |
+| `telemetryBroadcaster` | 1 | process | Ticks out client-count and buffer-fullness to the fleet |
 | per-batch dispatch | `batchesToFetch` per round | until batch committed | Owns one task's retry/reassign lifecycle |
 
 ### Synchronization primitives
@@ -601,6 +642,8 @@ re-rendering. Tracked in [§12](#12-known-limitations-and-future-work).
 | `SecondsToBroadcast` | 4 | Frames per subsequent broadcast and per dispatch round |
 | `BroadcastInterval` | 4 s | Cooldown between broadcasts and the upper bound on dispatcher pacing |
 | `TaskTimeout` | 2 s | Time a batch may be outstanding before reassignment |
+| `ClientCountInterval` | 2 s | Cadence for broadcasting the live connected-client count (≤ 0 disables) |
+| `BufferFullnessInterval` | 2 s | Cadence for broadcasting ring-buffer fullness (≤ 0 disables) |
 
 ### Sizing — `internal/protocol` and `internal/buffer`
 
@@ -621,6 +664,18 @@ re-rendering. Tracked in [§12](#12-known-limitations-and-future-work).
 | `writeTimeout` | 30 s | Dead-client write deadline |
 | `clientSendQueueSize` | 15 | Outbound messages buffered before dropping |
 | `maxIncomingMessageBytes` | 52,805 B | Inbound read limit (`1 + 4 + BatchSize`) |
+
+### Logging — `cmd/donut-server` (flags / env vars)
+
+| Flag | Env var | Default | Meaning |
+| --- | --- | --- | --- |
+| `-log-level` | `DONUT_LOG_LEVEL` | `info` | Verbosity: `debug`, `info`, `warn`, `error` |
+| `-log-sample-interval` | `DONUT_LOG_SAMPLE_INTERVAL` | 2 s | Min spacing between repeats of any one debug line; ≤ 0 disables sampling |
+
+The telemetry intervals above are also exposed as `-client-count-interval` /
+`DONUT_CLIENT_COUNT_INTERVAL` and `-buffer-fullness-interval` /
+`DONUT_BUFFER_FULLNESS_INTERVAL`. In all cases a flag overrides its env var,
+which overrides the `DefaultConfig` value.
 
 ### Client — `web/static/script.js`
 
