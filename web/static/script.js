@@ -3,37 +3,46 @@ window.onload = () => {
   const BufferSize = 20 * FramesPerBatch; // 20 seconds worth of frames
   const DonutStringLength = 1760;
   const IntervalBetweenFrames = 1000 / FramesPerBatch;
+  // Cap how many frames a single rAF callback may fast-forward, so a long gap
+  // (e.g. a backgrounded tab) snaps back to live instead of replaying stale frames.
+  const MaxCatchUpFrames = FramesPerBatch;
 
   class CircularBuffer {
     constructor() {
       this.frames = new Array(BufferSize);
-      this.head = 0;
-      this.tail = 0;
+      this.head = 0; // next write slot
+      this.tail = 0; // next read slot
+      this.count = 0; // buffered frames; the source of truth for full vs. empty
     }
 
     push(frames) {
-      console.log("Current delta: ", this.getDelta());
-
-      let newHeadPosition = 0;
       for (let i = 0; i < frames.length; i++) {
-        newHeadPosition = (this.head + 1) % BufferSize;
-        this.frames[newHeadPosition] = frames[i];
-        this.head = newHeadPosition;
+        if (this.count === BufferSize) {
+          // Full: drop the oldest frame so we stay at the live edge instead of
+          // lapping the read pointer and stalling.
+          this.tail = (this.tail + 1) % BufferSize;
+          this.count--;
+        }
+        this.frames[this.head] = frames[i];
+        this.head = (this.head + 1) % BufferSize;
+        this.count++;
       }
     }
 
     get() {
+      if (this.count === 0) return undefined;
       const frame = this.frames[this.tail];
       this.tail = (this.tail + 1) % BufferSize;
+      this.count--;
       return frame;
     }
 
+    size() {
+      return this.count;
+    }
+
     getDelta() {
-      if (this.head >= this.tail) {
-        return (this.head - this.tail) / FramesPerBatch;
-      } else {
-        return (BufferSize - this.tail + this.head) / FramesPerBatch;
-      }
+      return this.count / FramesPerBatch;
     }
   }
 
@@ -45,30 +54,36 @@ window.onload = () => {
   let lastTaskID = null;
 
   function drawFramesToCanvas() {
-    let lastFrameTime = 0;
+    let lastFrameTime = performance.now();
+    // Fractional count of frames we owe playback, accumulated from wall-clock
+    // time so the donut holds a true 60 fps regardless of the display's refresh
+    // rate (drawing at most one frame per rAF callback would drift below 60 fps
+    // on high-refresh displays, letting the buffer grow without bound).
+    let frameDebt = 0;
 
     function animate(currentTime) {
-      // Calculate time since last frame
       const deltaTime = currentTime - lastFrameTime;
+      lastFrameTime = currentTime;
+      frameDebt += deltaTime / IntervalBetweenFrames;
 
-      // If enough time has passed, draw the next frame
-      if (deltaTime >= IntervalBetweenFrames) {
-        if (frameBuffer.head !== frameBuffer.tail) {
-          const newFrame = frameBuffer.get();
-          if (newFrame !== undefined) {
-            donut.textContent = newFrame;
-            framesPlayed++;
-          }
-        }
-        // Update last frame time
-        lastFrameTime = currentTime;
+      let toDraw = Math.floor(frameDebt);
+      frameDebt -= toDraw; // carry the sub-frame remainder into the next callback
+      if (toDraw > MaxCatchUpFrames) {
+        toDraw = MaxCatchUpFrames;
+        frameDebt = 0; // drop the backlog after a long gap rather than spiral
       }
 
-      // Schedule the next frame
+      while (toDraw-- > 0 && frameBuffer.size() > 0) {
+        const newFrame = frameBuffer.get();
+        if (newFrame !== undefined) {
+          donut.textContent = newFrame;
+          framesPlayed++;
+        }
+      }
+
       requestAnimationFrame(animate);
     }
 
-    // Start the animation loop
     requestAnimationFrame(animate);
   }
   drawFramesToCanvas();
