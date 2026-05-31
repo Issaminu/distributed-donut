@@ -1,7 +1,7 @@
 package client
 
 import (
-	"log"
+	"log/slog"
 	"math/rand"
 	"sync"
 
@@ -83,14 +83,34 @@ func (p *ClientPool) PickNewClient() *Client {
 // prepared once (so its compressed on-wire form is computed a single time)
 // rather than per-client.
 func (p *ClientPool) Broadcast(frames []byte) {
-	encodedFrames := protocol.EncodeFrameBroadcast(frames)
+	p.broadcastEncoded(protocol.EncodeFrameBroadcast(frames), "frame broadcast")
+}
 
-	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, encodedFrames)
+// BroadcastClientCount tells every client how many workers are currently in the
+// fleet.
+func (p *ClientPool) BroadcastClientCount(count uint32) {
+	p.broadcastEncoded(protocol.EncodeClientCount(count), "client count")
+}
+
+// BroadcastBufferFullness tells every client how full the server's ring buffer
+// is, as a percentage (0-100).
+func (p *ClientPool) BroadcastBufferFullness(percent uint8) {
+	p.broadcastEncoded(protocol.EncodeBufferFullness(percent), "buffer fullness")
+}
+
+// broadcastEncoded prepares an already-encoded message once and fans it out to a
+// snapshot of the current clients. what names the message for error logs.
+func (p *ClientPool) broadcastEncoded(encoded []byte, what string) {
+	clients := p.Snapshot()
+	if len(clients) == 0 {
+		return // nothing to do, and no point preparing a message for no one
+	}
+	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, encoded)
 	if err != nil {
-		log.Println("Failed to prepare broadcast message:", err)
+		slog.Error("failed to prepare broadcast message", "kind", what, "err", err)
 		return
 	}
-	for _, client := range p.Snapshot() {
+	for _, client := range clients {
 		client.enqueue(prepared)
 	}
 }

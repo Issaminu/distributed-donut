@@ -5,7 +5,7 @@ package orchestrator
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -31,6 +31,12 @@ type Config struct {
 	// TaskTimeout is how long to wait for a client to return a batch before
 	// re-dispatching it to another client.
 	TaskTimeout time.Duration
+	// ClientCountInterval is how often the live count of connected clients is
+	// broadcast to the fleet. Zero disables it.
+	ClientCountInterval time.Duration
+	// BufferFullnessInterval is how often the server ring-buffer fullness
+	// percentage is broadcast to the fleet. Zero disables it.
+	BufferFullnessInterval time.Duration
 }
 
 // DefaultConfig returns the production timing.
@@ -40,6 +46,8 @@ func DefaultConfig() Config {
 		SecondsToBroadcast:      4,
 		BroadcastInterval:       4 * time.Second,
 		TaskTimeout:             2 * time.Second,
+		ClientCountInterval:     2 * time.Second,
+		BufferFullnessInterval:  2 * time.Second,
 	}
 }
 
@@ -65,6 +73,18 @@ func WithBroadcastThresholds(first, subsequent int) Option {
 	}
 }
 
+// WithClientCountInterval sets how often the connected-client count is broadcast
+// to the fleet. Zero disables the broadcast.
+func WithClientCountInterval(d time.Duration) Option {
+	return func(c *Config) { c.ClientCountInterval = d }
+}
+
+// WithBufferFullnessInterval sets how often the ring-buffer fullness percentage
+// is broadcast to the fleet. Zero disables the broadcast.
+func WithBufferFullnessInterval(d time.Duration) Option {
+	return func(c *Config) { c.BufferFullnessInterval = d }
+}
+
 // Orchestrator owns the rendering pipeline. Construct it with New, then call Run to start its background loops.
 type Orchestrator struct {
 	buffer   *buffer.FrameBuffer
@@ -86,10 +106,12 @@ func New(buf *buffer.FrameBuffer, pool *client.ClientPool, opts ...Option) *Orch
 	}
 }
 
-// Run starts the broadcaster and task-dispatcher loops. They stop when ctx is cancelled.
+// Run starts the broadcaster, task-dispatcher, and telemetry loops. They stop
+// when ctx is cancelled.
 func (o *Orchestrator) Run(ctx context.Context) {
 	go o.broadcaster(ctx)
 	go o.dispatcher(ctx)
+	go o.telemetryBroadcaster(ctx)
 }
 
 // HandleResult stores a render result a client sent back. Its signature
@@ -103,7 +125,7 @@ func (o *Orchestrator) broadcaster(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Frame broadcaster shutting down...")
+			slog.Info("frame broadcaster shutting down")
 			return
 		default:
 			seconds := o.cfg.SecondsToBroadcast
@@ -117,6 +139,9 @@ func (o *Orchestrator) broadcaster(ctx context.Context) {
 			frames := o.buffer.GetFramesToBroadcast(seconds)
 			o.clients.Broadcast(frames)
 			o.buffer.RemoveSentFramesFromBuffer(seconds)
+			// Hot-path detail, sampled so it doesn't flood the logs (see the
+			// sampling handler in cmd/donut-server). Only emitted at debug level.
+			slog.Debug("broadcast frames", "frames", len(frames)/protocol.FrameSize, "clients", o.clients.GetClientCount())
 			if isFirstBroadcast {
 				isFirstBroadcast = false
 			}
@@ -131,7 +156,7 @@ func (o *Orchestrator) dispatcher(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Task dispatcher shutting down...")
+			slog.Info("task dispatcher shutting down")
 			return
 		default:
 			batchesToFetch := o.cfg.SecondsToBroadcast
@@ -160,7 +185,39 @@ func (o *Orchestrator) dispatcher(ctx context.Context) {
 			wg.Wait() // Wait for every task batch to finish in this round before broadcasting
 
 			o.buffer.AdvanceHead(batchesToFetch)
+			// Hot-path detail, sampled (debug level only) like the broadcast log.
+			slog.Debug("dispatched round", "batches", batchesToFetch, "fullness_pct", o.buffer.FullnessPercent())
 			isFirstRound = false
+		}
+	}
+}
+
+// telemetryBroadcaster periodically pushes server-side stats to the whole fleet:
+// the live count of connected clients and the ring-buffer fullness percentage,
+// each on its own configurable interval. An interval of zero disables that
+// stat (its ticker channel stays nil, which blocks forever in the select).
+func (o *Orchestrator) telemetryBroadcaster(ctx context.Context) {
+	var clientCountC, fullnessC <-chan time.Time
+	if o.cfg.ClientCountInterval > 0 {
+		t := time.NewTicker(o.cfg.ClientCountInterval)
+		defer t.Stop()
+		clientCountC = t.C
+	}
+	if o.cfg.BufferFullnessInterval > 0 {
+		t := time.NewTicker(o.cfg.BufferFullnessInterval)
+		defer t.Stop()
+		fullnessC = t.C
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("telemetry broadcaster shutting down")
+			return
+		case <-clientCountC:
+			o.clients.BroadcastClientCount(uint32(o.clients.GetClientCount()))
+		case <-fullnessC:
+			o.clients.BroadcastBufferFullness(o.buffer.FullnessPercent())
 		}
 	}
 }
@@ -186,9 +243,9 @@ func (o *Orchestrator) dispatchRenderTask(startFrame uint32, endFrame uint32) {
 		case <-time.After(o.cfg.TaskTimeout): // timeout exceeded, picking new client
 			next := o.clients.PickNewClient()
 			if next.ID() == worker.ID() {
-				log.Println("Attempt #", attempt, "timed out, retrying with the same client", worker.ID())
+				slog.Warn("render task timed out, retrying with the same client", "attempt", attempt, "client", worker.ID())
 			} else {
-				log.Println("Attempt #", attempt, "timed out, switching executor to client", next.ID())
+				slog.Warn("render task timed out, switching executor", "attempt", attempt, "from_client", worker.ID(), "to_client", next.ID())
 				renderTaskID = o.batchMap.SwitchRenderTaskExecutor(renderTaskID, worker.ID(), next)
 				worker = next
 			}

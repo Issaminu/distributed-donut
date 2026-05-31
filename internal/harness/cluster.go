@@ -24,6 +24,10 @@ func fastOptions() []orchestrator.Option {
 		orchestrator.WithBroadcastThresholds(1, 1),
 		orchestrator.WithBroadcastInterval(10 * time.Millisecond),
 		orchestrator.WithTaskTimeout(150 * time.Millisecond),
+		// Telemetry broadcasts are off in the harness so they can't interleave
+		// with the frame stream the integrity checks rely on.
+		orchestrator.WithClientCountInterval(0),
+		orchestrator.WithBufferFullnessInterval(0),
 	}
 }
 

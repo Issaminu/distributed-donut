@@ -7,7 +7,7 @@ import (
 	"context"
 	"flag"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -31,8 +31,14 @@ func main() {
 	broadcastInterval := flag.Duration("broadcast-interval", envDuration("DONUT_BROADCAST_INTERVAL", def.BroadcastInterval), "pacing/cooldown between broadcasts (env: DONUT_BROADCAST_INTERVAL)")
 	firstBroadcastSeconds := flag.Int("first-broadcast-seconds", envInt("DONUT_FIRST_BROADCAST_SECONDS", def.FirstSecondsToBroadcast), "seconds of frames gathered before the first broadcast (env: DONUT_FIRST_BROADCAST_SECONDS)")
 	broadcastSeconds := flag.Int("broadcast-seconds", envInt("DONUT_BROADCAST_SECONDS", def.SecondsToBroadcast), "seconds of frames each subsequent broadcast covers (env: DONUT_BROADCAST_SECONDS)")
+	clientCountInterval := flag.Duration("client-count-interval", envDuration("DONUT_CLIENT_COUNT_INTERVAL", def.ClientCountInterval), "how often the connected-client count is broadcast to the fleet; 0 disables (env: DONUT_CLIENT_COUNT_INTERVAL)")
+	bufferFullnessInterval := flag.Duration("buffer-fullness-interval", envDuration("DONUT_BUFFER_FULLNESS_INTERVAL", def.BufferFullnessInterval), "how often ring-buffer fullness is broadcast to the fleet; 0 disables (env: DONUT_BUFFER_FULLNESS_INTERVAL)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", envDuration("DONUT_SHUTDOWN_TIMEOUT", 10*time.Second), "max time to drain in-flight requests on shutdown (env: DONUT_SHUTDOWN_TIMEOUT)")
+	logLevel := flag.String("log-level", envString("DONUT_LOG_LEVEL", "info"), "log verbosity: debug, info, warn, error (env: DONUT_LOG_LEVEL)")
+	logSampleInterval := flag.Duration("log-sample-interval", envDuration("DONUT_LOG_SAMPLE_INTERVAL", 2*time.Second), "min spacing between repeats of any single debug log line, to curb hot-path spam (env: DONUT_LOG_SAMPLE_INTERVAL)")
 	flag.Parse()
+
+	slog.SetDefault(newLogger(parseLevel(*logLevel), *logSampleInterval))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -42,7 +48,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		log.Println("Received termination signal, shutting down...")
+		slog.Info("received termination signal, shutting down")
 		cancel()
 	}()
 
@@ -54,25 +60,28 @@ func main() {
 		orchestrator.WithTaskTimeout(*taskTimeout),
 		orchestrator.WithBroadcastInterval(*broadcastInterval),
 		orchestrator.WithBroadcastThresholds(*firstBroadcastSeconds, *broadcastSeconds),
+		orchestrator.WithClientCountInterval(*clientCountInterval),
+		orchestrator.WithBufferFullnessInterval(*bufferFullnessInterval),
 	)
 
 	staticFS, err := fs.Sub(web.Static, "static")
 	if err != nil {
-		log.Fatalln("Failed to load embedded web client:", err)
+		slog.Error("failed to load embedded web client", "err", err)
+		os.Exit(1)
 	}
 	srv := server.New(clientPool, orch.HandleResult, staticFS)
 
 	orch.Run(ctx) // starts the broadcaster + task dispatcher
 	go func() {   // serves the web client and accepts worker connections
 		if err := srv.ListenAndServe(ctx, *addr, *shutdownTimeout); err != nil {
-			log.Println("HTTP server error:", err)
+			slog.Error("HTTP server error", "err", err)
 			cancel()
 		}
 	}()
 
 	// Block until context is cancelled
 	<-ctx.Done()
-	log.Println("Program terminated")
+	slog.Info("program terminated")
 }
 
 // defaultAddr resolves the default listen address: an explicit DONUT_ADDR wins,
@@ -95,7 +104,7 @@ func envDuration(key string, def time.Duration) time.Duration {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
-		log.Printf("invalid %s=%q, using default %s", key, v, def)
+		slog.Warn("invalid env value, using default", "key", key, "value", v, "default", def)
 	}
 	return def
 }
@@ -106,7 +115,15 @@ func envInt(key string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
-		log.Printf("invalid %s=%q, using default %d", key, v, def)
+		slog.Warn("invalid env value, using default", "key", key, "value", v, "default", def)
+	}
+	return def
+}
+
+// envString returns the value in key or def if the variable is unset or empty.
+func envString(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
 	}
 	return def
 }
