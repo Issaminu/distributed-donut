@@ -3,7 +3,7 @@ package harness_test
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -16,9 +16,9 @@ import (
 // TestMain silences the server's production logging for the whole test binary.
 // Even with the hot-path spam gone, the server still logs per-connection and
 // per-reassignment events; under a benchmark's load those serialize goroutines
-// through the log mutex and bury the results. (This also quiets the e2e tests.)
+// through the log handler and bury the results. (This also quiets the e2e tests.)
 func TestMain(m *testing.M) {
-	log.SetOutput(io.Discard)
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	os.Exit(m.Run())
 }
 

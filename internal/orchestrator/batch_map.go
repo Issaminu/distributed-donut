@@ -1,7 +1,7 @@
 package orchestrator
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/Issaminu/distributed-donut/internal/buffer"
@@ -69,7 +69,7 @@ func (fbMap *FrameBatchMap) SaveRenderResult(clientID uint32, renderResult *prot
 	fbMap.mutex.Lock()
 	defer fbMap.mutex.Unlock()
 	if _, ok := fbMap.frameBatches[clientID][renderResult.ID]; !ok {
-		log.Printf("Warning: Client %d is trying to save a render result for a task %d that isn't assigned to them", clientID, renderResult.ID)
+		slog.Warn("client returned a render result for a task not assigned to it", "client", clientID, "task", renderResult.ID)
 		return nil
 	}
 

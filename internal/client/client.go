@@ -6,7 +6,7 @@ package client
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,12 +68,12 @@ func (c *Client) WritePump() {
 			return
 		case msg := <-c.send:
 			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-				log.Println(err)
+				slog.Debug("client write failed", "client", c.id, "err", err)
 				c.Close()
 				return
 			}
 			if err := c.conn.WritePreparedMessage(msg); err != nil {
-				log.Println(err)
+				slog.Debug("client write failed", "client", c.id, "err", err)
 				c.Close() // dead connection; tear down so the read loop unblocks too
 				return
 			}
@@ -88,7 +88,7 @@ func (c *Client) enqueue(msg *websocket.PreparedMessage) {
 	select {
 	case c.send <- msg:
 	default:
-		log.Printf("Client %d send queue full, dropping message", c.id)
+		slog.Warn("client send queue full, dropping message", "client", c.id)
 	}
 }
 
@@ -110,7 +110,7 @@ func (c *Client) HandleReceivedMessage(data []byte) error {
 	}
 	messageType := data[0]
 	if messageType != protocol.MessageTypeRenderResult {
-		log.Println("Invalid message type received")
+		slog.Warn("invalid message type received from client", "client", c.id, "type", messageType)
 		return nil
 	}
 	renderResult, err := protocol.NewRenderResult(data[1:])
@@ -139,7 +139,7 @@ func (c *Client) RequestWork(renderTaskID uint32, startFrame uint32, endFrame ui
 	// uniformity.
 	prepared, err := websocket.NewPreparedMessage(websocket.BinaryMessage, requestedWork)
 	if err != nil {
-		log.Println("Failed to prepare render task message:", err)
+		slog.Error("failed to prepare render task message", "client", c.id, "err", err)
 		return
 	}
 	c.enqueue(prepared)

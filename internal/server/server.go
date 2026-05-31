@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -51,15 +51,15 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, shutdownTimeou
 
 	go func() {
 		<-ctx.Done()
-		log.Println("Shutting down WebSocket server...")
+		slog.Info("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Println("WebSocket server shutdown error:", err)
+			slog.Error("HTTP server shutdown error", "err", err)
 		}
 	}()
 
-	log.Println("Server started on", addr)
+	slog.Info("server started", "addr", addr)
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -78,28 +78,34 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 func (s *Server) handleNewConnection(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		slog.Warn("websocket upgrade failed", "err", err)
 		return
 	}
-	log.Println("Client connected")
 	c := client.NewClient(conn, s.onResult)
 	s.pool.AddClient(c)
+	slog.Debug("client connected", "client", c.ID())
 	defer c.Close()
 	go c.WritePump()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Connection handler shutting down...")
+			slog.Debug("connection handler shutting down", "client", c.ID())
 			return
 		default:
 			_, incomingMessage, err := conn.ReadMessage()
 			if err != nil {
-				log.Println(err)
+				// A browser tab closing is the normal case, not an error worth
+				// shouting about; only unexpected closes get a warning.
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+					slog.Warn("client read error", "client", c.ID(), "err", err)
+				} else {
+					slog.Debug("client disconnected", "client", c.ID(), "err", err)
+				}
 				return
 			}
 			if err := c.HandleReceivedMessage(incomingMessage); err != nil {
-				log.Println(err)
+				slog.Warn("dropping connection after invalid message", "client", c.ID(), "err", err)
 				return
 			}
 		}
