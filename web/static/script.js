@@ -40,6 +40,10 @@ window.onload = () => {
   const frameBuffer = new CircularBuffer();
   const donut = document.getElementById("donut");
 
+  // Live telemetry surfaced in the UI (all read from real client state).
+  let framesPlayed = 0;
+  let lastTaskID = null;
+
   function drawFramesToCanvas() {
     let lastFrameTime = 0;
 
@@ -53,6 +57,7 @@ window.onload = () => {
           const newFrame = frameBuffer.get();
           if (newFrame !== undefined) {
             donut.textContent = newFrame;
+            framesPlayed++;
           }
         }
         // Update last frame time
@@ -115,6 +120,7 @@ window.onload = () => {
 
     ws.onopen = () => {
       console.log("Connection established");
+      setStatus("online", "online · rendering");
     };
 
     ws.onmessage = (e) => {
@@ -135,6 +141,7 @@ window.onload = () => {
           "to",
           endFrame
         );
+        lastTaskID = renderTaskID;
         worker.postMessage({ renderTaskID, startFrame, endFrame });
       } else if (messageType === 0x2) {
         // Received frame broadcast message
@@ -152,6 +159,7 @@ window.onload = () => {
 
     ws.onclose = () => {
       console.log("Connection closed. Attempting to reconnect...");
+      setStatus("offline", "reconnecting");
       setTimeout(setupWebSocket, 3000); // Try to reconnect after 1 second
     };
 
@@ -160,6 +168,66 @@ window.onload = () => {
       ws.close(); // This will trigger onclose, which will attempt to reconnect
     };
   }
+
+  // --- UI telemetry -------------------------------------------------------
+  const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  const tBuffer = document.getElementById("t-buffer");
+  const tFps = document.getElementById("t-fps");
+  const tFrames = document.getElementById("t-frames");
+  const tTask = document.getElementById("t-task");
+  const sparkLine = document.getElementById("spark-line");
+  const sparkArea = document.getElementById("spark-area");
+
+  function setStatus(state, text) {
+    if (!statusEl) return;
+    statusEl.classList.remove("online", "offline");
+    statusEl.classList.add(state);
+    statusText.textContent = text;
+  }
+
+  // Rolling history of the buffer depth, drawn as a sparkline (viewBox 100x40).
+  const SPARK_SAMPLES = 40;
+  const bufferHistory = [];
+
+  function drawSpark() {
+    if (!sparkLine) return;
+    const n = bufferHistory.length;
+    if (n < 2) {
+      sparkLine.setAttribute("points", "");
+      if (sparkArea) sparkArea.setAttribute("points", "");
+      return;
+    }
+    const max = Math.max(4, ...bufferHistory) * 1.1;
+    let pts = "";
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 100;
+      const y = 39 - (bufferHistory[i] / max) * 37;
+      pts += (i ? " " : "") + x.toFixed(1) + "," + y.toFixed(1);
+    }
+    sparkLine.setAttribute("points", pts);
+    if (sparkArea) sparkArea.setAttribute("points", "0,40 " + pts + " 100,40");
+  }
+
+  // Sample the real client state once a second, off the render hot path.
+  let prevFrames = 0;
+  let prevTime = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const fps = Math.round(((framesPlayed - prevFrames) * 1000) / (now - prevTime));
+    prevFrames = framesPlayed;
+    prevTime = now;
+
+    const buffered = frameBuffer.getDelta();
+    if (tFps) tFps.textContent = fps;
+    if (tBuffer) tBuffer.textContent = buffered.toFixed(1);
+    if (tFrames) tFrames.textContent = framesPlayed.toLocaleString();
+    if (tTask) tTask.textContent = lastTaskID === null ? "—" : lastTaskID;
+
+    bufferHistory.push(buffered);
+    if (bufferHistory.length > SPARK_SAMPLES) bufferHistory.shift();
+    drawSpark();
+  }, 1000);
 
   setupWebSocket(); // Initial connection attempt
 
