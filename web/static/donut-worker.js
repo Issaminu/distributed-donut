@@ -1,4 +1,13 @@
-// Credit to a1k0n for the origin of the spinning donut: https://www.a1k0n.net/2011/07/20/donut-math.html
+// Credit to a1k0n for the origin of the spinning donut:
+// https://www.a1k0n.net/2021/01/13/optimizing-donut.html
+
+const STEP_THETA = 0.07;
+const STEP_PHI = 0.02;
+const cStepT = Math.cos(STEP_THETA),
+  sStepT = Math.sin(STEP_THETA),
+  cStepP = Math.cos(STEP_PHI),
+  sStepP = Math.sin(STEP_PHI);
+
 const asciiframe = (frameNumber) => {
   const A = 1 + 0.07 * frameNumber;
   const B = 1 + 0.03 * frameNumber;
@@ -12,16 +21,18 @@ const asciiframe = (frameNumber) => {
     b[k] = k % 80 === 79 ? "\n" : " ";
     z[k] = 0;
   }
-  for (let j = 0; j < 6.28; j += 0.07) {
+  // ct, st track cos/sin of theta, stepped by STEP_THETA each iteration.
+  let ct = 1,
+    st = 0;
+  for (let j = 0; j < 6.28; j += STEP_THETA) {
     // j <=> theta
-    const ct = Math.cos(j),
-      st = Math.sin(j);
-    for (let i = 0; i < 6.28; i += 0.02) {
+    const h = ct + 2; // R1 + R2*cos(theta)
+    // cp, sp track cos/sin of phi, reset to phi=0 and stepped by STEP_PHI.
+    let cp = 1,
+      sp = 0;
+    for (let i = 0; i < 6.28; i += STEP_PHI) {
       // i <=> phi
-      const sp = Math.sin(i),
-        cp = Math.cos(i),
-        h = ct + 2, // R1 + R2*cos(theta)
-        D = 1 / (sp * h * sA + st * cA + 5), // this is 1/z
+      const D = 1 / (sp * h * sA + st * cA + 5), // this is 1/z
         t = sp * h * cA - st * sA; // this is a clever factoring of some of the terms in x' and y'
 
       const x = 0 | (40 + 30 * D * (cp * h * cB - t * sB)),
@@ -38,7 +49,17 @@ const asciiframe = (frameNumber) => {
         z[o] = D;
         b[o] = ".,-~:;=!*#$@"[N > 0 ? N : 0];
       }
+
+      // Rotate phi by STEP_PHI: [cp, sp] <- R(STEP_PHI) [cp, sp].
+      const cpNext = cp * cStepP - sp * sStepP;
+      sp = sp * cStepP + cp * sStepP;
+      cp = cpNext;
     }
+
+    // Rotate theta by STEP_THETA: [ct, st] <- R(STEP_THETA) [ct, st].
+    const ctNext = ct * cStepT - st * sStepT;
+    st = st * cStepT + ct * sStepT;
+    ct = ctNext;
   }
   return b.join("");
 };
