@@ -314,10 +314,10 @@ main {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--bg-cell);
-  overflow: hidden;
 }
 
 .cell {
+  position: relative;
   padding: 1.05rem 1.2rem;
   border-left: 1px solid var(--line);
   display: flex;
@@ -339,10 +339,73 @@ main {
 }
 
 .cell-label {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
   font-size: 0.66rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-faint);
+}
+
+/* the "?" affordance next to each metric, plus its hover/tap tooltip */
+.info {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.info:hover,
+.info:focus-visible {
+  color: var(--ink);
+  border-color: var(--ink-dim);
+  outline: none;
+}
+
+.tip {
+  position: absolute;
+  left: 1.2rem;
+  right: 1.2rem;
+  top: 2.6rem;
+  z-index: 20;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  pointer-events: none;
+}
+
+.cell:has(.info:hover) .tip,
+.cell:focus-within .tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
 }
 
 .cell-value {
@@ -393,7 +456,6 @@ main {
 /* buffer cell carries a live sparkline anchored to its base */
 .cell-buffer {
   position: relative;
-  overflow: hidden;
 }
 
 .cell-buffer > .cell-label,
