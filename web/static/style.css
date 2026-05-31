@@ -361,16 +361,17 @@ main {
   border-radius: 50%;
   background: transparent;
   color: var(--ink-faint);
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: help;
   transition: color 0.15s, border-color 0.15s;
+}
+
+.info-icon {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }
 
 .info:hover,
