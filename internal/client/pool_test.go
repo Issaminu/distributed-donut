@@ -18,7 +18,7 @@ func testClient(id uint32) *Client {
 }
 
 func TestClientPoolAddRemoveCount(t *testing.T) {
-	p := NewClientPool()
+	p := NewClientPool(0)
 	if got := p.GetClientCount(); got != 0 {
 		t.Fatalf("new pool count = %d, want 0", got)
 	}
@@ -39,8 +39,41 @@ func TestClientPoolAddRemoveCount(t *testing.T) {
 	}
 }
 
+func TestClientPoolEnforcesMaxClients(t *testing.T) {
+	p := NewClientPool(2)
+
+	c1, c2, c3 := testClient(1), testClient(2), testClient(3)
+	if !p.AddClient(c1) || !p.AddClient(c2) {
+		t.Fatal("AddClient rejected a client while under capacity")
+	}
+	if p.AddClient(c3) {
+		t.Fatal("AddClient admitted a client beyond the cap")
+	}
+	if got := p.GetClientCount(); got != 2 {
+		t.Fatalf("count = %d, want 2 (rejected client must not be stored)", got)
+	}
+	if c3.pool != nil {
+		t.Error("rejected client must not get the pool back-reference")
+	}
+
+	// Freeing a slot lets a new client in.
+	p.RemoveClient(c1)
+	if !p.AddClient(c3) {
+		t.Fatal("AddClient rejected a client after a slot was freed")
+	}
+}
+
+func TestClientPoolZeroMaxIsUnlimited(t *testing.T) {
+	p := NewClientPool(0)
+	for i := 0; i < 50; i++ {
+		if !p.AddClient(testClient(uint32(i))) {
+			t.Fatalf("AddClient rejected client %d with an uncapped pool", i)
+		}
+	}
+}
+
 func TestClientPoolSnapshot(t *testing.T) {
-	p := NewClientPool()
+	p := NewClientPool(0)
 	c1, c2 := testClient(1), testClient(2)
 	p.AddClient(c1)
 	p.AddClient(c2)
@@ -59,7 +92,7 @@ func TestClientPoolSnapshot(t *testing.T) {
 }
 
 func TestPickNewClientReturnsAMember(t *testing.T) {
-	p := NewClientPool()
+	p := NewClientPool(0)
 	members := map[*Client]bool{}
 	for _, c := range []*Client{testClient(1), testClient(2), testClient(3)} {
 		p.AddClient(c)
@@ -73,7 +106,7 @@ func TestPickNewClientReturnsAMember(t *testing.T) {
 }
 
 func TestWaitForAtLeastOneUnblocksOnAdd(t *testing.T) {
-	p := NewClientPool()
+	p := NewClientPool(0)
 
 	done := make(chan struct{})
 	go func() {
@@ -96,7 +129,7 @@ func TestWaitForAtLeastOneUnblocksOnAdd(t *testing.T) {
 }
 
 func TestBroadcastEnqueuesToEveryClient(t *testing.T) {
-	p := NewClientPool()
+	p := NewClientPool(0)
 	c1, c2 := testClient(1), testClient(2)
 	p.AddClient(c1)
 	p.AddClient(c2)

@@ -82,7 +82,18 @@ func (s *Server) handleNewConnection(ctx context.Context, w http.ResponseWriter,
 		return
 	}
 	c := client.NewClient(conn, s.onResult)
-	s.pool.AddClient(c)
+	if !s.pool.AddClient(c) {
+		// At capacity: tell the client to retry later and drop the connection
+		// before spawning its writer, so a flood can't exhaust our goroutines.
+		slog.Warn("rejecting connection: client pool at capacity", "client", c.ID())
+		_ = conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "server at capacity"),
+			time.Now().Add(time.Second),
+		)
+		conn.Close()
+		return
+	}
 	slog.Debug("client connected", "client", c.ID())
 	defer c.Close()
 	go c.WritePump()

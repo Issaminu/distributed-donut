@@ -228,7 +228,7 @@ func TestWritePumpDeliversEnqueuedMessages(t *testing.T) {
 }
 
 func TestCloseRemovesFromPoolAndIsIdempotent(t *testing.T) {
-	pool := NewClientPool()
+	pool := NewClientPool(0)
 	c, _, cleanup := newConnectedClient(t, nil)
 	defer cleanup()
 

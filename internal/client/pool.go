@@ -10,24 +10,40 @@ import (
 	"github.com/Issaminu/distributed-donut/internal/protocol"
 )
 
+// DefaultMaxClients caps how many workers may be connected at once. It bounds
+// the per-connection goroutines and buffers an unauthenticated client flood
+// could otherwise allocate without limit. Operators tune it per deployment.
+const DefaultMaxClients = 10000
+
 type ClientPool struct {
-	clients map[*Client]struct{}
-	mu      sync.Mutex
-	cond    *sync.Cond
+	clients    map[*Client]struct{}
+	maxClients int // <= 0 means unlimited
+	mu         sync.Mutex
+	cond       *sync.Cond
 }
 
-func NewClientPool() *ClientPool {
-	p := &ClientPool{clients: make(map[*Client]struct{})}
+// NewClientPool builds a pool that admits at most maxClients connections; a
+// value <= 0 disables the cap (used by tests and the harness).
+func NewClientPool(maxClients int) *ClientPool {
+	p := &ClientPool{clients: make(map[*Client]struct{}), maxClients: maxClients}
 	p.cond = sync.NewCond(&p.mu)
 	return p
 }
 
-func (p *ClientPool) AddClient(client *Client) {
+// AddClient registers a client and reports whether it was admitted. It returns
+// false (without adding) when the pool is already at capacity, so the caller can
+// reject the connection. The capacity check and insert are atomic under the
+// pool lock, so concurrent upgrades can't race past the cap.
+func (p *ClientPool) AddClient(client *Client) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.maxClients > 0 && len(p.clients) >= p.maxClients {
+		return false
+	}
 	client.pool = p
 	p.clients[client] = struct{}{}
 	p.cond.Broadcast()
+	return true
 }
 
 func (p *ClientPool) RemoveClient(client *Client) {

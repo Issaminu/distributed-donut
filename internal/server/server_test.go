@@ -20,7 +20,7 @@ import (
 
 func newTestServer(t *testing.T, onResult client.ResultHandler, assets fs.FS) (*httptest.Server, *client.ClientPool) {
 	t.Helper()
-	pool := client.NewClientPool()
+	pool := client.NewClientPool(0)
 	s := New(pool, onResult, assets)
 	ts := httptest.NewServer(s.Handler(context.Background()))
 	t.Cleanup(ts.Close)
@@ -51,6 +51,42 @@ func TestServesStaticAssets(t *testing.T) {
 		if string(body) != want {
 			t.Errorf("GET %s body = %q, want %q", path, body, want)
 		}
+	}
+}
+
+// A connection that arrives when the pool is at capacity must be rejected with
+// a "try again later" close rather than admitted, so a flood can't pile up
+// connections without bound.
+func TestRejectsConnectionsBeyondMaxClients(t *testing.T) {
+	pool := client.NewClientPool(1)
+	s := New(pool, nil, fstest.MapFS{})
+	ts := httptest.NewServer(s.Handler(context.Background()))
+	t.Cleanup(ts.Close)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	// First connection fills the single slot and stays open.
+	first, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("first dial: %v", err)
+	}
+	defer first.Close()
+
+	// Second connection upgrades but must be closed immediately with 1013.
+	second, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("second dial: %v", err)
+	}
+	defer second.Close()
+
+	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	_, _, err = second.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseTryAgainLater) {
+		t.Fatalf("second connection error = %v, want close 1013 (try again later)", err)
+	}
+	if got := pool.GetClientCount(); got != 1 {
+		t.Errorf("pool count = %d, want 1 (rejected connection must not be admitted)", got)
 	}
 }
 

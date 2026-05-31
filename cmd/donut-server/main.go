@@ -34,6 +34,7 @@ func main() {
 	clientCountInterval := flag.Duration("client-count-interval", envDuration("DONUT_CLIENT_COUNT_INTERVAL", def.ClientCountInterval), "how often the connected-client count is broadcast to the fleet; 0 disables (env: DONUT_CLIENT_COUNT_INTERVAL)")
 	bufferFullnessInterval := flag.Duration("buffer-fullness-interval", envDuration("DONUT_BUFFER_FULLNESS_INTERVAL", def.BufferFullnessInterval), "how often ring-buffer fullness is broadcast to the fleet; 0 disables (env: DONUT_BUFFER_FULLNESS_INTERVAL)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", envDuration("DONUT_SHUTDOWN_TIMEOUT", 10*time.Second), "max time to drain in-flight requests on shutdown (env: DONUT_SHUTDOWN_TIMEOUT)")
+	maxClients := flag.Int("max-clients", envInt("DONUT_MAX_CLIENTS", client.DefaultMaxClients), "max concurrent worker connections; further connections are rejected, 0 disables the cap (env: DONUT_MAX_CLIENTS)")
 	logLevel := flag.String("log-level", envString("DONUT_LOG_LEVEL", "info"), "log verbosity: debug, info, warn, error (env: DONUT_LOG_LEVEL)")
 	logSampleInterval := flag.Duration("log-sample-interval", envDuration("DONUT_LOG_SAMPLE_INTERVAL", 2*time.Second), "min spacing between repeats of any single debug log line, to curb hot-path spam (env: DONUT_LOG_SAMPLE_INTERVAL)")
 	flag.Parse()
@@ -55,7 +56,7 @@ func main() {
 	// Wire the pipeline together: the buffer and client pool are shared state,
 	// the orchestrator drives them, and the server feeds connecting clients in.
 	frameBuffer := buffer.NewFrameBuffer()
-	clientPool := client.NewClientPool()
+	clientPool := client.NewClientPool(*maxClients)
 	orch := orchestrator.New(frameBuffer, clientPool,
 		orchestrator.WithTaskTimeout(*taskTimeout),
 		orchestrator.WithBroadcastInterval(*broadcastInterval),

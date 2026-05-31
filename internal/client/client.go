@@ -23,6 +23,16 @@ const (
 	writeTimeout        = 30 * time.Second // a write that can't complete in this long means a dead client
 	clientSendQueueSize = 15               // outbound messages we'll buffer before deciding a client is too slow
 
+	// pongWait is how long we'll wait for any traffic (a pong, or a real
+	// message) before declaring a connection dead. Without it an idle socket —
+	// one that connects and then sends nothing — would occupy its goroutines
+	// and buffers forever, which is a cheap slow-loris exhaustion vector.
+	pongWait = 60 * time.Second
+	// pingPeriod is how often the writer pings an otherwise-quiet client to keep
+	// the connection alive. It must be shorter than pongWait so a healthy client
+	// always answers before the deadline.
+	pingPeriod = (pongWait * 9) / 10
+
 	// maxIncomingMessageBytes bounds the size of a message we'll read from a client. The only thing a client ever sends is a RenderResult:
 	// 1 byte message type + 4 bytes render task ID + BatchSize bytes of frames.
 	// This is done so that a misbehaving client can't stream us unbounded data or a decompression bomb.
@@ -47,6 +57,13 @@ type Client struct {
 
 func NewClient(ws *websocket.Conn, onResult ResultHandler) *Client {
 	ws.SetReadLimit(maxIncomingMessageBytes)
+	// Arm the idle deadline now and push it out on every pong. Browsers answer
+	// our pings automatically at the protocol level, so a live client keeps
+	// resetting this; a silent one trips it and the read loop tears down.
+	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(pongWait))
+	})
 	return &Client{
 		id:       clientIDCounter.Add(1),
 		conn:     ws,
@@ -62,6 +79,8 @@ func (c *Client) ID() uint32 { return c.id }
 // WritePump is the goroutine that handles sending messages to a client.
 // Each connected client has its own independent WritePump().
 func (c *Client) WritePump() {
+	ping := time.NewTicker(pingPeriod)
+	defer ping.Stop()
 	for {
 		select {
 		case <-c.quit:
@@ -75,6 +94,17 @@ func (c *Client) WritePump() {
 			if err := c.conn.WritePreparedMessage(msg); err != nil {
 				slog.Debug("client write failed", "client", c.id, "err", err)
 				c.Close() // dead connection; tear down so the read loop unblocks too
+				return
+			}
+		case <-ping.C:
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				slog.Debug("client ping failed", "client", c.id, "err", err)
+				c.Close()
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				slog.Debug("client ping failed", "client", c.id, "err", err)
+				c.Close() // can't reach the client; tear down
 				return
 			}
 		}

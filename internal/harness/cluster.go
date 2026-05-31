@@ -63,7 +63,7 @@ func NewCluster(opts ...ClusterOption) *Cluster {
 	}
 
 	buf := buffer.NewFrameBuffer()
-	pool := client.NewClientPool()
+	pool := client.NewClientPool(0)
 	orch := orchestrator.New(buf, pool, cfg.orchOptions...)
 	srv := server.New(pool, orch.HandleResult, fstest.MapFS{})
 

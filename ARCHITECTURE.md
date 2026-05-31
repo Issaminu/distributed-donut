@@ -298,11 +298,19 @@ A **`Client`** owns the plumbing for one worker:
   first.
 - A per-client read limit (`maxIncomingMessageBytes`) caps inbound message size
   so a misbehaving client can't stream unbounded data or a decompression bomb.
+- An idle deadline (`pongWait`) plus keepalive: `WritePump` pings every
+  `pingPeriod`, and each pong (browsers answer automatically) pushes the read
+  deadline out. A connection that goes silent trips the deadline and is torn
+  down, so an idle socket can't hold its goroutines and buffers forever.
 
 The **`ClientPool`** is the live fleet: a `map[*Client]struct{}` guarded by a
 mutex, with a `sync.Cond` so producers can **block until at least one worker
 exists** (`WaitForAtLeastOne`, `PickNewClient`) — there's no point dispatching or
-broadcasting into an empty room. `Broadcast` prepares the message once and fans
+broadcasting into an empty room. `AddClient` also enforces a **connection cap**
+(`maxClients`): the capacity check and insert happen atomically under the pool
+lock, so concurrent upgrades can't race past the limit; when full it returns
+`false` and the server rejects the connection with a "try again later" close
+before starting any per-client goroutines. `Broadcast` prepares the message once and fans
 it out to a snapshot of clients ([DR-7](#dr-7-preparedmessage-for-broadcast)).
 The telemetry fan-outs (`BroadcastClientCount`, `BroadcastBufferFullness`) share
 that same prepare-once path via the internal `broadcastEncoded` helper.
@@ -618,6 +626,16 @@ context.
 unbounded data or land a decompression bomb. A result's frame payload must be
 *exactly* `BatchSize`, or it's rejected at decode.
 
+Connection-level resource exhaustion is bounded too. A **connection cap**
+(`maxClients`, default 10,000) limits how many workers can be attached at once,
+so an unauthenticated connection flood can't grow the per-connection goroutines
+and buffers without limit; connections past the cap are rejected before any
+goroutine is spawned for them. An **idle deadline with ping/pong keepalive**
+(`pongWait` / `pingPeriod`) reaps connections that stop answering, so a client
+can't open sockets and hold them open silently (a slow-loris vector). These
+bound what a single host can tie up; true volumetric (L3/L4) floods are out of
+scope for the process itself and belong to a fronting proxy or CDN.
+
 **The open risk — untrusted results.** Workers are arbitrary browsers, yet their
 raw frame bytes are committed straight into the shared buffer that *every* viewer
 plays back. A buggy or malicious client can corrupt the animation for all
@@ -664,6 +682,9 @@ re-rendering. Tracked in [§12](#12-known-limitations-and-future-work).
 | `writeTimeout` | 30 s | Dead-client write deadline |
 | `clientSendQueueSize` | 15 | Outbound messages buffered before dropping |
 | `maxIncomingMessageBytes` | 52,805 B | Inbound read limit (`1 + 4 + BatchSize`) |
+| `pongWait` | 60 s | Idle deadline; a connection silent this long is reaped |
+| `pingPeriod` | 54 s | Keepalive ping cadence (`pongWait × 9/10`) |
+| `DefaultMaxClients` | 10,000 | Default concurrent-connection cap (`-max-clients` / `DONUT_MAX_CLIENTS`; 0 disables) |
 
 ### Logging — `cmd/donut-server` (flags / env vars)
 
