@@ -136,6 +136,60 @@ func TestDecodeRenderTaskRejectsShortInput(t *testing.T) {
 	}
 }
 
+// A client-count telemetry message should encode to type + count and decode
+// back to the same count, mirroring what the browser client does on receipt.
+func TestClientCountRoundTrip(t *testing.T) {
+	const count = uint32(0x0A0B0C0D)
+	msg := protocol.EncodeClientCount(count)
+
+	if len(msg) != 5 {
+		t.Fatalf("len = %d, want 5", len(msg))
+	}
+	if msg[0] != protocol.MessageTypeClientCount {
+		t.Errorf("message type = %#x, want %#x", msg[0], protocol.MessageTypeClientCount)
+	}
+	got, err := protocol.DecodeClientCount(msg[1:])
+	if err != nil {
+		t.Fatalf("DecodeClientCount: %v", err)
+	}
+	if got != count {
+		t.Errorf("round trip = %d, want %d", got, count)
+	}
+}
+
+func TestDecodeClientCountRejectsShortInput(t *testing.T) {
+	if _, err := protocol.DecodeClientCount([]byte{0, 1, 2}); err == nil {
+		t.Fatal("expected error for short client count body")
+	}
+}
+
+// A buffer-fullness telemetry message should encode to type + percent and decode
+// back to the same percent.
+func TestBufferFullnessRoundTrip(t *testing.T) {
+	const percent = uint8(73)
+	msg := protocol.EncodeBufferFullness(percent)
+
+	if len(msg) != 2 {
+		t.Fatalf("len = %d, want 2", len(msg))
+	}
+	if msg[0] != protocol.MessageTypeBufferFullness {
+		t.Errorf("message type = %#x, want %#x", msg[0], protocol.MessageTypeBufferFullness)
+	}
+	got, err := protocol.DecodeBufferFullness(msg[1:])
+	if err != nil {
+		t.Fatalf("DecodeBufferFullness: %v", err)
+	}
+	if got != percent {
+		t.Errorf("round trip = %d, want %d", got, percent)
+	}
+}
+
+func TestDecodeBufferFullnessRejectsShortInput(t *testing.T) {
+	if _, err := protocol.DecodeBufferFullness(nil); err == nil {
+		t.Fatal("expected error for empty buffer fullness body")
+	}
+}
+
 // A result encoded by a worker should be parseable by the server via
 // NewRenderResult, recovering the same task ID and frame bytes.
 func TestRenderResultRoundTrip(t *testing.T) {

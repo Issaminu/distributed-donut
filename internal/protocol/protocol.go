@@ -31,6 +31,8 @@ const (
 	MessageTypeRenderTask     = 0x0 // 0000 - requesting work (compute) from workers/clients
 	MessageTypeRenderResult   = 0x1 // 0001 - delivering a rendered frame batch from a worker/client to the orchestrator
 	MessageTypeFrameBroadcast = 0x2 // 0010 - broadcasting frame batch(s) to all workers/clients
+	MessageTypeClientCount    = 0x3 // 0011 - telemetry: live count of connected clients, broadcast to everyone
+	MessageTypeBufferFullness = 0x4 // 0100 - telemetry: server ring-buffer fullness as a percentage, broadcast to everyone
 )
 
 // EncodeRenderTask builds a RenderTask message: 1 byte message type + 4 bytes
@@ -62,6 +64,42 @@ func EncodeRenderResult(renderTaskID uint32, frames []byte) []byte {
 	binary.BigEndian.PutUint32(msg[1:5], renderTaskID)
 	copy(msg[5:], frames)
 	return msg
+}
+
+// EncodeClientCount builds a ClientCount telemetry message: 1 byte message type
+// + 4 bytes client count. It is broadcast to every client so each viewer can
+// show how many browsers are currently in the fleet.
+func EncodeClientCount(count uint32) []byte {
+	msg := make([]byte, 5)
+	msg[0] = MessageTypeClientCount
+	binary.BigEndian.PutUint32(msg[1:5], count)
+	return msg
+}
+
+// DecodeClientCount parses the body of a ClientCount message (the 4 bytes after
+// the message-type tag). It is the symmetric counterpart to EncodeClientCount.
+func DecodeClientCount(data []byte) (count uint32, err error) {
+	if len(data) < 4 {
+		return 0, errors.New("client count message too short")
+	}
+	return binary.BigEndian.Uint32(data[0:4]), nil
+}
+
+// EncodeBufferFullness builds a BufferFullness telemetry message: 1 byte message
+// type + 1 byte percentage (0-100). It is broadcast to every client so each
+// viewer can show how full the server's ring buffer is.
+func EncodeBufferFullness(percent uint8) []byte {
+	return []byte{MessageTypeBufferFullness, percent}
+}
+
+// DecodeBufferFullness parses the body of a BufferFullness message (the 1 byte
+// after the message-type tag). It is the symmetric counterpart to
+// EncodeBufferFullness.
+func DecodeBufferFullness(data []byte) (percent uint8, err error) {
+	if len(data) < 1 {
+		return 0, errors.New("buffer fullness message too short")
+	}
+	return data[0], nil
 }
 
 // DecodeRenderTask parses the body of a RenderTask message (the 12 bytes after
