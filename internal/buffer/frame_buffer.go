@@ -97,6 +97,17 @@ func (fb *FrameBuffer) GetLengthInFrames() uint64 { // Frame Buffer length in nu
 	return (fb.head - fb.tail) / protocol.FrameSize
 }
 
+// FullnessPercent reports how full the ring is, from 0 (empty) to 100 (full),
+// as a single byte suitable for telemetry broadcast.
+func (fb *FrameBuffer) FullnessPercent() uint8 {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	length := (fb.head - fb.tail) / protocol.FrameSize
+	percent := min(length*100/MaxFrames, 100)
+	return uint8(percent)
+}
+
 func (fb *FrameBuffer) GetNextFrameNumber() uint64 {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()

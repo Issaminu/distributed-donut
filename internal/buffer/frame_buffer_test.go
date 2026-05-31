@@ -47,6 +47,25 @@ func TestAddAndBroadcastRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFullnessPercent(t *testing.T) {
+	fb := NewFrameBuffer()
+	if got := fb.FullnessPercent(); got != 0 {
+		t.Errorf("empty buffer fullness = %d%%, want 0", got)
+	}
+
+	// Half full: head minus tail spans half the ring.
+	fb.head = uint64(MaxFrames/2) * protocol.FrameSize
+	if got := fb.FullnessPercent(); got != 50 {
+		t.Errorf("half-full fullness = %d%%, want 50", got)
+	}
+
+	// Completely full.
+	fb.head = uint64(MaxFrames) * protocol.FrameSize
+	if got := fb.FullnessPercent(); got != 100 {
+		t.Errorf("full buffer fullness = %d%%, want 100", got)
+	}
+}
+
 func TestGetFramesToBroadcastReturnsNilWhenInsufficient(t *testing.T) {
 	fb := NewFrameBuffer()
 	if got := fb.GetFramesToBroadcast(1); got != nil {
