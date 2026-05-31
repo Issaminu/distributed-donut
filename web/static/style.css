@@ -310,7 +310,7 @@ main {
   width: 100%;
   margin-top: 1rem;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--bg-cell);
@@ -325,8 +325,17 @@ main {
   gap: 0.5rem;
 }
 
-.cell:first-child {
-  border-left: none;
+/* 3-column borders: first cell of each row has no left border, rows after the
+   first get a top one. Scoped to desktop so these don't out-specify the 2-column
+   rules below (media queries don't add specificity). */
+@media (min-width: 721px) {
+  .cell:nth-child(3n + 1) {
+    border-left: none;
+  }
+
+  .cell:nth-child(n + 4) {
+    border-top: 1px solid var(--line);
+  }
 }
 
 .cell-label {
@@ -358,8 +367,27 @@ main {
   color: var(--accent);
 }
 
-#t-task {
+#t-task,
+#t-clients {
   color: var(--accent-2);
+}
+
+/* server-buffer gauge: a thin fill bar pinned to the base of its cell */
+.gauge {
+  margin-top: auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.gauge-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent-2);
+  box-shadow: 0 0 6px var(--accent-glow);
+  transition: width 0.4s ease;
 }
 
 /* buffer cell carries a live sparkline anchored to its base */
@@ -543,8 +571,13 @@ footer .sep {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .cell:nth-child(3),
-  .cell:nth-child(4) {
+  /* reset the desktop 3-col border rules, then re-derive for 2 columns */
+  .cell {
+    border-left: 1px solid var(--line);
+    border-top: none;
+  }
+
+  .cell:nth-child(n + 3) {
     border-top: 1px solid var(--line);
   }
 

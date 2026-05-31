@@ -52,6 +52,9 @@ window.onload = () => {
   // Live telemetry surfaced in the UI (all read from real client state).
   let framesPlayed = 0;
   let lastTaskID = null;
+  // Server-side telemetry, pushed periodically over the socket (0x3 / 0x4).
+  let serverClientCount = null;
+  let serverBufferPct = null;
 
   function drawFramesToCanvas() {
     let lastFrameTime = performance.now();
@@ -160,15 +163,22 @@ window.onload = () => {
         worker.postMessage({ renderTaskID, startFrame, endFrame });
       } else if (messageType === 0x2) {
         // Received frame broadcast message
-        console.log("Received a broadcast of frames. Drawing to canvas...");
-
         const encodedData = new Uint8Array(data, 1); // Skip the message type byte
         const decodedFrames = decodeFrames(encodedData);
 
         // Add the decoded frames to the circular buffer
         frameBuffer.push(decodedFrames);
+      } else if (messageType === 0x3) {
+        // Live count of connected clients (fleet size).
+        serverClientCount = dv.getUint32(1);
+        if (tClients) tClients.textContent = serverClientCount.toLocaleString();
+      } else if (messageType === 0x4) {
+        // Server ring-buffer fullness, as a percentage (0-100).
+        serverBufferPct = dv.getUint8(1);
+        if (tServerBuffer) tServerBuffer.textContent = serverBufferPct;
+        if (serverBufferBar) serverBufferBar.style.width = serverBufferPct + "%";
       } else {
-        console.log("Received other message");
+        console.log("Received unknown message type", messageType);
       }
     };
 
@@ -191,6 +201,9 @@ window.onload = () => {
   const tFps = document.getElementById("t-fps");
   const tFrames = document.getElementById("t-frames");
   const tTask = document.getElementById("t-task");
+  const tClients = document.getElementById("t-clients");
+  const tServerBuffer = document.getElementById("t-server-buffer");
+  const serverBufferBar = document.getElementById("server-buffer-bar");
   const sparkLine = document.getElementById("spark-line");
   const sparkArea = document.getElementById("spark-area");
 
